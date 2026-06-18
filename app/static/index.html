@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>智慧記帳 & 盲點診斷系統 (Firebase Auth 安全版)</title>
+  
+  <!-- 行動裝置/PWA 支援 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="智慧記帳">
+  <meta name="theme-color" content="#faf6ee"> <!-- 改成日系可愛燕麥牛奶背景色，視覺更具一致性 -->
+  <link rel="apple-touch-icon" href="shiba_guard.png">
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- Google Fonts Fredoka & M PLUS Rounded 1c (日系可愛圓體) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- CSS 資源 (加上快取破壞參數) -->
+  <link rel="stylesheet" href="style.css?v=20260618_08">
+  
+  <!-- 三方庫 CDN (Firebase v10 Compat SDK, PapaParse, Chart.js) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <!-- 全域狀態提示 -->
+  <div id="network-toast" class="toast hidden"></div>
+  <div id="error-toast" class="toast error hidden"></div>
+
+  <!-- 🔐 Firebase Auth 登入磨砂玻璃遮罩 -->
+  <div id="login-overlay" class="login-overlay hidden">
+    <div class="login-card card">
+      <div class="login-header">
+        <img src="shiba_guard.png" alt="柴柴守衛" class="login-cute-img">
+        <h2>解鎖記帳本</h2>
+        <p>請輸入您的專屬記帳帳密以同步雲端資料</p>
+      </div>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="login-email">電子郵件 (Email)</label>
+          <input type="email" id="login-email" placeholder="example@user.com" required>
+        </div>
+        <div class="form-group">
+          <label for="login-password">解鎖密碼</label>
+          <input type="password" id="login-password" placeholder="請輸入密碼" required>
+        </div>
+        <button type="submit" id="btn-login" class="btn btn-primary w-100">
+          <span class="btn-text">解鎖帳本</span>
+          <span class="spinner hidden"></span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 應用程式容器 -->
+  <div class="app-container">
+    
+    <!-- 頂部狀態列 -->
+    <header class="app-header">
+      <div class="header-logo">
+        <span class="logo-icon">💰</span>
+        <h1>智慧記帳</h1>
+      </div>
+      <div class="supabase-status" id="connection-status">
+        <span class="status-indicator disconnected"></span>
+        <span class="status-text">未連線</span>
+      </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="app-content">
+      
+      <!-- 1. 儀表板頁面 (Dashboard) -->
+      <section id="page-dashboard" class="page-section active">
+        <div class="section-title-wrapper">
+          <h2>儀表板</h2>
+          <div class="month-selector">
+            <button id="btn-dashboard-prev-month" class="btn btn-icon">◀</button>
+            <span id="dashboard-month-label" class="current-month-display">載入中...</span>
+            <button id="btn-dashboard-next-month" class="btn btn-icon">▶</button>
+          </div>
+        </div>
+        
+        <!-- 摘要小卡 -->
+        <div class="stats-grid">
+          <div class="stat-card income">
+            <span class="card-label">當月總收入</span>
+            <span class="card-value" id="stat-total-income">$0</span>
+          </div>
+          <div class="stat-card expense">
+            <span class="card-label">當月總支出</span>
+            <span class="card-value" id="stat-total-expense">$0</span>
+          </div>
+          <div class="stat-card credit">
+            <span class="card-label">當月刷卡消費</span>
+            <span class="card-value" id="stat-total-credit">$0</span>
+            <span class="card-subtext" id="stat-credit-unpaid">(未繳卡費)</span>
+          </div>
+          <div class="stat-card daigou">
+            <span class="card-label">代購未請款</span>
+            <span class="card-value" id="stat-total-daigou">$0</span>
+            <span class="card-subtext">小灶私廚代購</span>
+          </div>
+        </div>
+
+        <!-- 盲點診斷警告區 -->
+        <div class="diagnostic-box" id="diagnostic-container">
+          <h3>🔍 記帳盲點診斷與警示</h3>
+          <div class="diagnostic-list" id="diagnostic-list">
+            <div class="diagnostic-item info">
+              <span class="diag-icon">💡</span>
+              <p class="diag-text">正在連接 Firebase 資料庫，開始進行帳目診斷...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 圖表分析區 -->
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>消費分類比例</h3>
+            <div class="chart-container">
+              <canvas id="categoryChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <h3>每日消費趨勢</h3>
+            <div class="chart-container">
+              <canvas id="trendChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 快速記帳頁面 (Quick Add) -->
+      <section id="page-quickadd" class="page-section">
+        <h2>快速記帳</h2>
+        <div class="card form-card">
+          <form id="expense-form">
+            <!-- 日期與星期 -->
+            <div class="form-row split">
+              <div class="form-group">
+                <label for="exp-date">日期</label>
+                <input type="date" id="exp-date" required>
+              </div>
+              <div class="form-group">
+                <label for="exp-weekday">星期</label>
+                <input type="text" id="exp-weekday" readonly class="readonly-input">
+              </div>
+            </div>
+
+            <!-- 收支類型切換 -->
+            <div class="transaction-type-toggle" id="quickadd-type-toggle">
+              <button type="button" class="type-btn active" data-type="expense">支出</button>
+              <button type="button" class="type-btn" data-type="income">收入</button>
+            </div>
+
+            <!-- 品項與金額 -->
+            <div class="form-row split">
+              <div class="form-group autocomplete">
+                <label for="exp-item">品項 (品名)</label>
+                <input type="text" id="exp-item" placeholder="例如：早餐、美廉社" required autocomplete="off">
+                <div id="autocomplete-list" class="autocomplete-items hidden"></div>
+              </div>
+              <div class="form-group">
+                <label for="exp-amount">金額</label>
+                <input type="number" id="exp-amount" placeholder="例如：150" required step="any">
+                <span class="amount-tip" id="amount-calc-tip">預計填入金額欄位</span>
+              </div>
+            </div>
+
+            <!-- 付款方式與分類項目 -->
+            <div class="form-row split">
+              <div class="form-group">
+                <label for="exp-payment">付款方式</label>
+                <select id="exp-payment" required>
+                  <!-- 動態載入 -->
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="exp-category">分類項目</label>
+                <select id="exp-category" required>
+                  <!-- 動態載入 -->
+                </select>
+              </div>
+            </div>
+
+            <!-- 備註與固定開銷 -->
+            <div class="form-group">
+              <label for="exp-remark">備註</label>
+              <input type="text" id="exp-remark" placeholder="例如：牛奶與廚房紙巾">
+            </div>
+
+            <div class="form-row checkbox-row">
+              <label class="checkbox-container">
+                <input type="checkbox" id="exp-fixed">
+                <span class="checkmark"></span>
+                此為固定開銷 (房貸、保險、持股信託等)
+              </label>
+            </div>
+
+            <!-- 儲存按鈕 -->
+            <button type="submit" id="btn-save-expense" class="btn btn-primary">
+              <span class="btn-text">儲存記帳</span>
+              <span class="spinner hidden"></span>
+            </button>
+          </form>
+          
+          <!-- 可愛貓貓裝飾 -->
+          <div class="cute-decoration">
+            <img src="cat_helper.png" alt="貓貓助理" class="cute-helper-img">
+            <div class="cute-bubble">貓貓提醒：每一筆消費都要好好記錄唷！(=•ω•=)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. 流水帳明細頁面 (Transactions) -->
+      <section id="page-transactions" class="page-section">
+        <div class="section-title-wrapper">
+          <h2>流水帳明細</h2>
+          <div class="month-selector">
+            <button id="btn-prev-month" class="btn btn-icon">◀</button>
+            <span id="trans-month-label" class="current-month-display">2026年 6月</span>
+            <button id="btn-next-month" class="btn btn-icon">▶</button>
+          </div>
+        </div>
+
+        <!-- 搜尋與篩選列 -->
+        <div class="filter-bar">
+          <input type="text" id="search-query" placeholder="搜尋品項或備註...">
+          <select id="filter-category">
+            <option value="">全部分類</option>
+          </select>
+          <select id="filter-payment">
+            <option value="">全部付款方式</option>
+          </select>
+        </div>
+
+        <!-- 流水帳表格 -->
+        <div class="table-responsive card">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>星期</th>
+                <th>品項</th>
+                <th>付款方式</th>
+                <th class="num-col">金額</th>
+                <th class="num-col">刷卡金額</th>
+                <th>分類</th>
+                <th>備註</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="transaction-table-body">
+              <tr>
+                <td colspan="9" class="center-text">載入中...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 4. 小灶私廚代購頁面 (Dai Gou) -->
+      <section id="page-daigou" class="page-section">
+        <h2>小灶私廚代購管理</h2>
+        
+        <!-- 新增代購表單 -->
+        <div class="card form-card compact-card">
+          <h3>新增代購項目</h3>
+          <form id="daigou-form">
+            <div class="form-row daigou-row">
+              <div class="form-group">
+                <label for="dg-date">日期</label>
+                <input type="date" id="dg-date" required>
+              </div>
+              <div class="form-group">
+                <label for="dg-item">項目</label>
+                <input type="text" id="dg-item" placeholder="例如：醬油、餛飩皮" required>
+              </div>
+              <div class="form-group">
+                <label for="dg-amount">金額</label>
+                <input type="number" id="dg-amount" placeholder="金額" required min="1">
+              </div>
+              <div class="form-group button-group">
+                <button type="submit" id="btn-save-daigou" class="btn btn-secondary">新增</button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <!-- 代購清單分割 -->
+        <div class="daigou-tables-wrapper">
+          <!-- 未請款清單 -->
+          <div class="daigou-table-box card">
+            <div class="box-header">
+              <h3>未請款明細</h3>
+              <span class="unpaid-badge" id="unpaid-daigou-total">未請款總計: $0</span>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table compact">
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>項目</th>
+                    <th class="num-col">金額</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="daigou-unpaid-body">
+                  <tr><td colspan="4" class="center-text">載入中...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 已請款清單 -->
+          <div class="daigou-table-box card">
+            <h3>已請款明細 (歷史紀錄)</h3>
+            <div class="table-responsive">
+              <table class="data-table compact">
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>項目</th>
+                    <th class="num-col">金額</th>
+                    <th>狀態</th>
+                  </tr>
+                </thead>
+                <tbody id="daigou-paid-body">
+                  <tr><td colspan="4" class="center-text">載入中...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. 規費手帳頁面 (Recurring Expenses) [NEW] -->
+      <section id="page-recurring" class="page-section">
+        <h2>規費手帳</h2>
+        
+        <!-- 規費數據摘要 -->
+        <div class="stats-grid">
+          <div class="stat-card daigou">
+            <span class="card-label">規費歷史總累計</span>
+            <span class="card-value" id="recurring-total-alltime">$0</span>
+          </div>
+          <div class="stat-card expense">
+            <span class="card-label">當月規費累計</span>
+            <span class="card-value" id="recurring-total-month">$0</span>
+          </div>
+          <div class="stat-card income">
+            <span class="card-label">平均每月規費</span>
+            <span class="card-value" id="recurring-total-average">$0</span>
+          </div>
+        </div>
+
+        <!-- 走勢圖與分類大卡片 -->
+        <div class="grid-2-col">
+          <!-- 規費月度走勢圖 -->
+          <div class="card">
+            <h3>📈 規費月度走勢圖</h3>
+            <div class="chart-container" style="height: 280px;">
+              <canvas id="recurringChart"></canvas>
+            </div>
+          </div>
+
+          <!-- 規費分門別類摺疊列表 -->
+          <div class="recurring-accordion-container">
+            
+            <!-- 卡片 1：管理費 -->
+            <div class="accordion-item card compact-card">
+              <div class="accordion-header" onclick="toggleAccordion(this)">
+                <div class="header-left">
+                  <span class="cute-icon">🏠</span>
+                  <span class="accordion-title">管理費</span>
+                </div>
+                <div class="header-right">
+                  <span class="accordion-badge" id="recurring-sum-management">$0</span>
+                  <span class="arrow">▼</span>
+                </div>
+              </div>
+              <div class="accordion-content">
+                <div class="table-responsive">
+                  <table class="data-table compact">
+                    <thead>
+                      <tr><th>日期</th><th>項目</th><th class="num-col">金額</th><th>備註</th></tr>
+                    </thead>
+                    <tbody id="recurring-list-management">
+                      <tr><td colspan="4" class="center-text">無繳費紀錄</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片 2：水費 -->
+            <div class="accordion-item card compact-card">
+              <div class="accordion-header" onclick="toggleAccordion(this)">
+                <div class="header-left">
+                  <span class="cute-icon">💧</span>
+                  <span class="accordion-title">水費</span>
+                </div>
+                <div class="header-right">
+                  <span class="accordion-badge" id="recurring-sum-water">$0</span>
+                  <span class="arrow">▼</span>
+                </div>
+              </div>
+              <div class="accordion-content">
+                <div class="table-responsive">
+                  <table class="data-table compact">
+                    <thead>
+                      <tr><th>日期</th><th>項目</th><th class="num-col">金額</th><th>備註</th></tr>
+                    </thead>
+                    <tbody id="recurring-list-water">
+                      <tr><td colspan="4" class="center-text">無繳費紀錄</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片 3：電費 -->
+            <div class="accordion-item card compact-card">
+              <div class="accordion-header" onclick="toggleAccordion(this)">
+                <div class="header-left">
+                  <span class="cute-icon">⚡</span>
+                  <span class="accordion-title">電費</span>
+                </div>
+                <div class="header-right">
+                  <span class="accordion-badge" id="recurring-sum-electricity">$0</span>
+                  <span class="arrow">▼</span>
+                </div>
+              </div>
+              <div class="accordion-content">
+                <div class="table-responsive">
+                  <table class="data-table compact">
+                    <thead>
+                      <tr><th>日期</th><th>項目</th><th class="num-col">金額</th><th>備註</th></tr>
+                    </thead>
+                    <tbody id="recurring-list-electricity">
+                      <tr><td colspan="4" class="center-text">無繳費紀錄</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片 4：稅費 -->
+            <div class="accordion-item card compact-card">
+              <div class="accordion-header" onclick="toggleAccordion(this)">
+                <div class="header-left">
+                  <span class="cute-icon">💸</span>
+                  <span class="accordion-title">稅費</span>
+                </div>
+                <div class="header-right">
+                  <span class="accordion-badge" id="recurring-sum-taxes">$0</span>
+                  <span class="arrow">▼</span>
+                </div>
+              </div>
+              <div class="accordion-content">
+                <div class="table-responsive">
+                  <table class="data-table compact">
+                    <thead>
+                      <tr><th>日期</th><th>項目</th><th class="num-col">金額</th><th>備註</th></tr>
+                    </thead>
+                    <tbody id="recurring-list-taxes">
+                      <tr><td colspan="4" class="center-text">無繳費紀錄</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片 5：其它規費 -->
+            <div class="accordion-item card compact-card">
+              <div class="accordion-header" onclick="toggleAccordion(this)">
+                <div class="header-left">
+                  <span class="cute-icon">📶</span>
+                  <span class="accordion-title">其它規費</span>
+                </div>
+                <div class="header-right">
+                  <span class="accordion-badge" id="recurring-sum-others">$0</span>
+                  <span class="arrow">▼</span>
+                </div>
+              </div>
+              <div class="accordion-content">
+                <div class="table-responsive">
+                  <table class="data-table compact">
+                    <thead>
+                      <tr><th>日期</th><th>項目</th><th class="num-col">金額</th><th>備註</th></tr>
+                    </thead>
+                    <tbody id="recurring-list-others">
+                      <tr><td colspan="4" class="center-text">無繳費紀錄</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. 設定頁面 (Settings) -->
+      <section id="page-settings" class="page-section">
+        <h2>系統設定</h2>
+
+        <!-- [搬移至此] 匯入與匯出資料備份區 -->
+        <div class="grid-2-col">
+          <!-- CSV 匯入卡片 -->
+          <div class="card">
+            <h3>📥 歷史資料 CSV 匯入工具</h3>
+            <p class="description">拖入您電腦現有的 1~6 月消費明細 CSV 檔案，即可快速解析並自動匯入 Firebase Firestore 雲端資料庫。</p>
+            
+            <div class="form-group">
+              <label for="csv-type">選擇匯入資料類型</label>
+              <select id="csv-type">
+                <option value="expense">月份消費明細 (115年消費 - X月.csv)</option>
+                <option value="daigou">小灶私廚代購 (115年消費 - 小灶私廚代購.csv)</option>
+              </select>
+            </div>
+
+            <div id="drop-zone" class="drop-zone">
+              <span class="drop-zone-icon">📄</span>
+              <span class="drop-zone-text">將 CSV 檔案拖曳至此，或點擊選擇檔案</span>
+              <input type="file" id="csv-file-input" accept=".csv" class="hidden">
+            </div>
+
+            <div id="import-progress" class="import-progress hidden">
+              <div class="progress-bar-wrapper">
+                <div class="progress-bar" id="progress-bar-fill"></div>
+              </div>
+              <span class="progress-status" id="progress-status-text">準備解析...</span>
+            </div>
+          </div>
+
+          <!-- CSV 匯出與備份卡片 -->
+          <div class="card">
+            <h3>📤 匯出資料庫備份</h3>
+            <p class="description">將您存在 Firebase 中的明細，匯出為完全相容舊版格式的試算表 CSV 檔。</p>
+            
+            <div class="form-group">
+              <label for="export-month">選擇匯出月份</label>
+              <input type="month" id="export-month" value="2026-06">
+            </div>
+
+            <button id="btn-export-csv" class="btn btn-primary w-100">
+              <span>匯出消費明細 CSV</span>
+            </button>
+
+            <hr class="card-divider">
+
+            <button id="btn-export-daigou" class="btn btn-secondary w-100">
+              <span>匯出小灶私廚代購 CSV</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- [NEW] 定期規費關鍵字自訂卡片 -->
+        <div class="card m-t-20">
+          <h3>🗓️ 定期規費自動判定關鍵字設定</h3>
+          <p class="description">在此新增或刪除各個規費類別對應的自動判定字眼（品項名稱只要包含這些字，便會自動歸類到規費手帳中，免重新上版）。</p>
+          <div class="list-manager" id="recurring-settings-container">
+            <!-- 由 app.js 動態渲染 -->
+            <p class="center-text">載入設定中...</p>
+          </div>
+        </div>
+
+
+        <div class="card form-card">
+          <h3>🔌 Firebase 雲端資料庫連線設定</h3>
+          <p class="description">請貼上您在 Firebase 註冊的網頁應用程式 `firebaseConfig` 物件內容 (包含大括號 `{ ... }`)。</p>
+          
+          <form id="settings-form">
+            <div class="form-group">
+              <label for="set-config">Firebase Config JSON</label>
+              <textarea id="set-config" rows="8" placeholder='{
+  "apiKey": "AIzaSy...",
+  "authDomain": "your-app.firebaseapp.com",
+  "projectId": "your-app",
+  "storageBucket": "your-app.appspot.com",
+  "messagingSenderId": "...",
+  "appId": "..."
+}' required style="width: 100%; padding: 12px; border-radius: 10px; background: rgba(141, 110, 99, 0.05); color: var(--text-primary); font-family: monospace; border: 1px solid var(--card-border); outline: none;"></textarea>
+            </div>
+            
+            <div class="button-group-row">
+              <button type="submit" id="btn-save-settings" class="btn btn-primary">儲存連線設定</button>
+              <button type="button" id="btn-clear-settings" class="btn btn-danger">清除連線設定</button>
+            </div>
+          </form>
+          
+          <button type="button" id="btn-logout" class="btn btn-danger w-100 m-t-20 hidden">登出記帳帳號</button>
+        </div>
+
+        <div class="grid-2-col m-t-20">
+          <!-- 分類項目管理 -->
+          <div class="card">
+            <h3>🏷️ 分類項目清單</h3>
+            <div class="list-manager">
+              <ul class="manager-list" id="settings-category-list">
+                <li>載入中...</li>
+              </ul>
+              <div class="add-item-row">
+                <input type="text" id="new-category-name" placeholder="新增分類名稱">
+                <button id="btn-add-category" class="btn btn-secondary btn-sm">新增</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 付款管道管理 -->
+          <div class="card">
+            <h3>💳 付款方式與類型</h3>
+            <div class="list-manager">
+              <ul class="manager-list" id="settings-payment-list">
+                <li>載入中...</li>
+              </ul>
+              <div class="add-item-row vertical">
+                <input type="text" id="new-payment-name" placeholder="新增付款管道">
+                <label class="checkbox-container sm">
+                  <input type="checkbox" id="new-payment-credit">
+                  <span class="checkmark"></span>
+                  此為信用卡/點數 (填入刷卡欄位)
+                </label>
+                <button id="btn-add-payment" class="btn btn-secondary btn-sm m-t-5">新增管道</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- 底部行動裝置導覽列 (Mobile Nav) -->
+    <nav class="app-nav">
+      <a href="#dashboard" class="nav-item active" data-target="page-dashboard">
+        <span class="nav-icon">📊</span>
+        <span class="nav-text">儀表板</span>
+      </a>
+      <a href="#quickadd" class="nav-item" data-target="page-quickadd">
+        <span class="nav-icon">✍️</span>
+        <span class="nav-text">記帳</span>
+      </a>
+      <a href="#transactions" class="nav-item" data-target="page-transactions">
+        <span class="nav-icon">📝</span>
+        <span class="nav-text">明細</span>
+      </a>
+      <a href="#daigou" class="nav-item" data-target="page-daigou">
+        <span class="nav-icon">🍳</span>
+        <span class="nav-text">代購</span>
+      </a>
+      <a href="#recurring" class="nav-item" data-target="page-recurring">
+        <span class="nav-icon">🗓️</span>
+        <span class="nav-text">規費</span>
+      </a>
+      <a href="#settings" class="nav-item" data-target="page-settings">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-text">設定</span>
+      </a>
+    </nav>
+
+  </div>
+
+  <!-- 編輯明細對話框 (Modal) -->
+  <div id="edit-modal" class="modal hidden">
+    <div class="modal-content card">
+      <h3>修改消費明細</h3>
+      <form id="edit-form">
+        <input type="hidden" id="edit-id">
+        <div class="form-row split">
+          <div class="form-group">
+            <label for="edit-date">日期</label>
+            <input type="date" id="edit-date" required>
+          </div>
+          <div class="form-group">
+            <label for="edit-weekday">星期</label>
+            <input type="text" id="edit-weekday" readonly class="readonly-input">
+          </div>
+        </div>
+        <!-- 收支類型切換 -->
+        <div class="transaction-type-toggle" id="edit-type-toggle">
+          <button type="button" class="type-btn active" data-type="expense">支出</button>
+          <button type="button" class="type-btn" data-type="income">收入</button>
+        </div>
+
+        <div class="form-row split">
+          <div class="form-group">
+            <label for="edit-item">品項</label>
+            <input type="text" id="edit-item" required>
+          </div>
+          <div class="form-group">
+            <label for="edit-amount">金額</label>
+            <input type="number" id="edit-amount" required step="any">
+          </div>
+        </div>
+        <div class="form-row split">
+          <div class="form-group">
+            <label for="edit-payment">付款方式</label>
+            <select id="edit-payment" required></select>
+          </div>
+          <div class="form-group">
+            <label for="edit-category">分類項目</label>
+            <select id="edit-category" required></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="edit-remark">備註</label>
+          <input type="text" id="edit-remark">
+        </div>
+        <div class="form-row checkbox-row">
+          <label class="checkbox-container">
+            <input type="checkbox" id="edit-fixed">
+            <span class="checkmark"></span>
+            此為固定開銷
+          </label>
+        </div>
+        <div class="button-group-row">
+          <button type="submit" class="btn btn-primary">確認修改</button>
+          <button type="button" id="btn-cancel-edit" class="btn btn-secondary">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- JavaScript 核心邏輯 -->
+  <script src="app.js?v=20260618_08"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+.gemini/
+*.py
+scratch/
+node_modules/
+.venv/

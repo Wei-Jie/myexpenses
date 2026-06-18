@@ -1,0 +1,24 @@
+{
+  "name": "智慧記帳手帳",
+  "short_name": "智慧記帳",
+  "description": "具備盲點診斷與規費手帳的日系可愛記帳 App",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#faf6ee",
+  "theme_color": "#1e1e24",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "shiba_guard.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "cat_helper.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
