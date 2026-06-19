@@ -12,6 +12,9 @@ let autocompleteList = [];
 let currentLedgerOwnerUid = null;
 let currentLedgerOwnerEmail = null;
 
+// 當前帳本的定期規費判定關鍵字配置 (自雲端載入快取)
+let currentRecurringConfig = null;
+
 // 當前驗證畫面模式：false = 登入/解鎖, true = 註冊
 let isSignUpMode = false;
 
@@ -419,15 +422,11 @@ async function loadAndInitializeData() {
         { name: '行', display_order: 4 },
         { name: '育', display_order: 5 },
         { name: '樂', display_order: 6 },
-        { name: '其他', display_order: 7 },
-        { name: '家用', display_order: 8 },
-        { name: '育兒', display_order: 9 },
-        { name: '小灶私廚代墊', display_order: 10 },
-        { name: '醫療', display_order: 11 },
-        { name: '保險', display_order: 12 },
-        { name: '投資', display_order: 13 },
-        { name: '其它', display_order: 14 },
-        { name: '收入', display_order: 15 }
+        { name: '投資', display_order: 7 },
+        { name: '醫療', display_order: 8 },
+        { name: '保險', display_order: 9 },
+        { name: '其他', display_order: 10 },
+        { name: '收入', display_order: 11 }
       ];
       
       const batch = db.batch();
@@ -458,19 +457,7 @@ async function loadAndInitializeData() {
       console.log('偵測到此帳戶無付款管道，自動初始化基礎付款管道...');
       const defaultPays = [
         { name: '現金', is_credit: false },
-        { name: 'LineBank', is_credit: false },
-        { name: '收入', is_credit: false },
-        { name: 'J卡Point', is_credit: true },
-        { name: 'J卡Cash', is_credit: true },
-        { name: 'momo卡', is_credit: true },
-        { name: '熊卡', is_credit: true },
-        { name: 'LinePoint', is_credit: true },
-        { name: 'momo紅利金', is_credit: true },
-        { name: 'mo幣', is_credit: true },
-        { name: '富邦聯名卡', is_credit: true },
-        { name: '遠東商銀卡', is_credit: true },
-        { name: '富邦好市多聯名卡', is_credit: true },
-        { name: '全聯儲值金餘額', is_credit: true }
+        { name: '信用卡', is_credit: true }
       ];
       
       const batch = db.batch();
@@ -490,7 +477,26 @@ async function loadAndInitializeData() {
       paymentsCache.push({ id: doc.id, ...doc.data() });
     });
     
-    // C. 一次性載入前 5000 筆歷史交易明細至快取 (繞過複合索引，在前端進行高效月份篩選)
+    // [NEW] C. 載入定期規費自訂判定關鍵字 (By UID 雲端跨裝置同步，免除 localStorage 換裝置重設缺點)
+    let recurSnap = await db.collection('recurring_configs').doc(uid).get();
+    if (!recurSnap.exists) {
+      console.log('偵測到此帳戶無雲端規費配置，自動建立預設規費判定關鍵字...');
+      const defaultRecur = {
+        uid: uid,
+        ...DEFAULT_RECURRING_CONFIG,
+        updated_at: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      try {
+        await db.collection('recurring_configs').doc(uid).set(defaultRecur);
+      } catch (err) {
+        console.error('初始化雲端規費配置失敗:', err);
+      }
+      currentRecurringConfig = DEFAULT_RECURRING_CONFIG;
+    } else {
+      currentRecurringConfig = recurSnap.data();
+    }
+    
+    // D. 一次性載入前 5000 筆歷史交易明細至快取 (繞過複合索引，在前端進行高效月份篩選)
     console.log(`[快取機制] 正在載入帳本 ${uid} 的歷史交易資料...`);
     const transSnap = await db.collection('transactions')
       .where('uid', '==', uid)
@@ -525,6 +531,7 @@ async function loadAndInitializeData() {
     });
     
     populateDropdowns();
+    updateDaigouTextByEmail();
     
     // 重整當前選定頁面的渲染
     const activeSection = document.querySelector('.page-section.active');
@@ -572,6 +579,30 @@ function populateDropdowns() {
   });
   
   updatePaymentTip();
+}
+
+function updateDaigouTextByEmail() {
+  const user = firebase.auth().currentUser;
+  if (!user) return;
+  
+  const isJeff = user.email === 'jeff.wang0211@gmail.com';
+  
+  const statDaigouSubtext = document.getElementById('stat-daigou-subtext');
+  const pageDaigouTitle = document.getElementById('page-daigou-title');
+  const backupDaigouOption = document.getElementById('backup-daigou-option');
+  const exportDaigouBtnText = document.getElementById('export-daigou-btn-text');
+  
+  if (isJeff) {
+    if (statDaigouSubtext) statDaigouSubtext.textContent = '小灶私廚代購';
+    if (pageDaigouTitle) pageDaigouTitle.textContent = '小灶私廚代購管理';
+    if (backupDaigouOption) backupDaigouOption.textContent = '小灶私廚代購 (115年消費 - 小灶私廚代購.csv)';
+    if (exportDaigouBtnText) exportDaigouBtnText.textContent = '匯出小灶私廚代購 CSV';
+  } else {
+    if (statDaigouSubtext) statDaigouSubtext.textContent = '代購';
+    if (pageDaigouTitle) pageDaigouTitle.textContent = '代購管理';
+    if (backupDaigouOption) backupDaigouOption.textContent = '代購 (115年消費 - 代購.csv)';
+    if (exportDaigouBtnText) exportDaigouBtnText.textContent = '匯出代購 CSV';
+  }
 }
 
 function updatePaymentTip() {
@@ -1834,7 +1865,10 @@ async function handleExportDaigouCSV() {
       csvRows.push(row.join(','));
     });
     
-    downloadCSVFile(csvRows.join('\n'), '115年消費 - 小灶私廚代購_匯出備份.csv');
+    const user = firebase.auth().currentUser;
+    const isJeff = user && user.email === 'jeff.wang0211@gmail.com';
+    const filename = isJeff ? '115年消費 - 小灶私廚代購_匯出備份.csv' : '115年消費 - 代購_匯出備份.csv';
+    downloadCSVFile(csvRows.join('\n'), filename);
     showToast('🎉 代購 CSV 匯出成功！');
   } catch (err) {
     console.error('匯出代購失敗:', err);
@@ -2156,32 +2190,33 @@ function autoSwitchToggleByPayment(payName) {
 // 21. 規費手帳核心邏輯 (自訂關鍵字、過濾統計、Accordion 展開與走勢圖) [NEW]
 // ==========================================================================
 const DEFAULT_RECURRING_CONFIG = {
-  management: ['管理費', '日昇管理費'],
-  water: ['水費', '日昇水費', '自來水'],
+  management: ['管理費'],
+  water: ['水費', '自來水'],
   electricity: ['電費', '電力', '台灣電力', '電工'],
   taxes: ['稅', '所得稅', '房屋稅', '地價稅', '牌照稅', '燃料稅', '退稅'],
-  others: ['瓦斯', '天然氣', '皇家天然氣', '寬頻', '第四台', '網路', '管理費(其它)', '規費', '規費(其它)']
+  others: ['瓦斯', '天然氣', '寬頻', '第四台', '網路', '管理費(其它)', '規費', '規費(其它)']
 };
 
 function getRecurringConfig() {
-  const uid = currentLedgerOwnerUid || (firebase.auth().currentUser ? firebase.auth().currentUser.uid : 'default');
-  const key = `recurring_config_${uid}`;
-  const config = localStorage.getItem(key);
-  if (config) {
-    try {
-      return JSON.parse(config);
-    } catch (e) {
-      console.error('解析規費設定失敗，使用預設配置:', e);
-    }
+  if (currentRecurringConfig) {
+    return currentRecurringConfig;
   }
-  localStorage.setItem(key, JSON.stringify(DEFAULT_RECURRING_CONFIG));
   return DEFAULT_RECURRING_CONFIG;
 }
 
 function saveRecurringConfig(config) {
+  currentRecurringConfig = config;
   const uid = currentLedgerOwnerUid || (firebase.auth().currentUser ? firebase.auth().currentUser.uid : 'default');
-  const key = `recurring_config_${uid}`;
-  localStorage.setItem(key, JSON.stringify(config));
+  if (db && firebase.auth().currentUser) {
+    db.collection('recurring_configs').doc(uid).set({
+      uid: uid,
+      ...config,
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    }).catch(err => {
+      console.error('儲存雲端規費配置失敗:', err);
+      showToast('❌ 儲存雲端規費配置失敗', 'error');
+    });
+  }
 }
 
 function renderRecurringSettings() {
@@ -2226,7 +2261,7 @@ function renderRecurringSettings() {
 }
 
 window.handleDeleteKeyword = function(categoryKey, keyword) {
-  const config = getRecurringConfig();
+  const config = JSON.parse(JSON.stringify(getRecurringConfig()));
   if (config[categoryKey]) {
     config[categoryKey] = config[categoryKey].filter(k => k !== keyword);
     saveRecurringConfig(config);
@@ -2241,7 +2276,7 @@ window.handleAddKeyword = function(categoryKey) {
   const val = input.value.trim();
   if (!val) return;
   
-  const config = getRecurringConfig();
+  const config = JSON.parse(JSON.stringify(getRecurringConfig()));
   if (!config[categoryKey]) config[categoryKey] = [];
   
   if (config[categoryKey].includes(val)) {

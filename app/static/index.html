@@ -119,7 +119,7 @@
           <div class="stat-card daigou">
             <span class="card-label">代購未請款</span>
             <span class="card-value" id="stat-total-daigou">$0</span>
-            <span class="card-subtext">小灶私廚代購</span>
+            <span class="card-subtext" id="stat-daigou-subtext">小灶私廚代購</span>
           </div>
         </div>
 
@@ -282,7 +282,7 @@
 
       <!-- 4. 小灶私廚代購頁面 (Dai Gou) -->
       <section id="page-daigou" class="page-section">
-        <h2>小灶私廚代購管理</h2>
+        <h2 id="page-daigou-title">小灶私廚代購管理</h2>
         
         <!-- 新增代購表單 -->
         <div class="card form-card compact-card">
@@ -537,7 +537,7 @@
               <label for="csv-type">選擇匯入資料類型</label>
               <select id="csv-type">
                 <option value="expense">月份消費明細 (115年消費 - X月.csv)</option>
-                <option value="daigou">小灶私廚代購 (115年消費 - 小灶私廚代購.csv)</option>
+                <option value="daigou" id="backup-daigou-option">小灶私廚代購 (115年消費 - 小灶私廚代購.csv)</option>
               </select>
             </div>
 
@@ -572,7 +572,7 @@
             <hr class="card-divider">
 
             <button id="btn-export-daigou" class="btn btn-secondary w-100">
-              <span>匯出小灶私廚代購 CSV</span>
+              <span id="export-daigou-btn-text">匯出小灶私廚代購 CSV</span>
             </button>
           </div>
         </div>
