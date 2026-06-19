@@ -1,11 +1,12 @@
-const CACHE_NAME = 'myexpenses-cache-20260618_12';
+const CACHE_NAME = 'myexpenses-cache-20260618_13';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
   './app.js',
   './shiba_guard.png',
-  './cat_helper.png'
+  './cat_helper.png',
+  './sad_shiba.png'
 ];
 
 // 安裝事件：快取所有靜態資源

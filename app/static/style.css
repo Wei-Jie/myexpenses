@@ -1295,3 +1295,52 @@ select:focus {
   }
 }
 
+/* ==========================================================================
+   19. 自訂確認對話框 (Custom Confirm Modal) [NEW]
+   ========================================================================== */
+.confirm-card {
+  max-width: 380px !important;
+  text-align: center;
+  padding: 25px !important;
+  border-width: 3px !important;
+  animation: popIn 0.35s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+}
+
+@keyframes popIn {
+  from { transform: scale(0.85); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.confirm-header {
+  margin-bottom: 20px;
+}
+
+.confirm-cute-img {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 3px solid var(--card-border);
+  object-fit: cover;
+  margin-bottom: 15px;
+  animation: wiggle 2s ease-in-out infinite;
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-6deg); }
+}
+
+.confirm-header h3 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  margin-bottom: 8px;
+  color: var(--color-expense);
+}
+
+.confirm-header p {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding: 0 10px;
+}
+

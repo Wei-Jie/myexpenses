@@ -42,7 +42,7 @@ function registerServiceWorker() {
 }
 
 // 1. 更版快取檢測與版本設定 (Cache Busting)
-const APP_VERSION = '20260618_12';
+const APP_VERSION = '20260618_13';
 function setupAppVersion() {
   console.log(`智慧記帳系統 (Firebase Auth 版) 啟動，版本號: ${APP_VERSION}`);
   const lastVersion = localStorage.getItem('app_version');
@@ -560,7 +560,8 @@ async function handleLoginSubmit(e) {
 }
 
 async function handleLogout() {
-  if (!confirm('您確定要鎖定帳本並登出嗎？離線時將無法記帳。')) return;
+  const confirmed = await showCustomConfirm('您確定要鎖定帳本並登出嗎？離線時將無法記帳。', '確定要登出鎖定嗎？', 'shiba_guard.png');
+  if (!confirmed) return;
   
   try {
     await firebase.auth().signOut();
@@ -911,7 +912,8 @@ async function handleUpdateExpense(e) {
 }
 
 async function handleDeleteExpense(id) {
-  if (!confirm('您確定要刪除這筆消費明細嗎？')) return;
+  const confirmed = await showCustomConfirm('真的要刪除這筆消費明細嗎？柴柴會哭哭喔... (ಥ_ಥ)', '真的要刪除嗎？', 'sad_shiba.png');
+  if (!confirmed) return;
   if (!db) return;
   
   try {
@@ -1691,8 +1693,9 @@ function handleSaveSettings(e) {
   }
 }
 
-function handleClearSettings() {
-  if (!confirm('您確定要清除連線設定嗎？資料庫中的資料不會遺失，但此瀏覽器將無法同步。')) return;
+async function handleClearSettings() {
+  const confirmed = await showCustomConfirm('您確定要清除連線設定嗎？資料庫中的資料不會遺失，但此瀏覽器將無法同步。', '清除連線設定？', 'shiba_guard.png');
+  if (!confirmed) return;
   
   localStorage.removeItem('firebase_config');
   document.getElementById('set-config').value = '';
@@ -2161,5 +2164,42 @@ function renderRecurringChart(monthlySums) {
         }
       }
     }
+  });
+}
+
+// ==========================================================================
+// 22. 自訂可愛確認對話框 (Custom Confirm Dialog) [NEW]
+// ==========================================================================
+function showCustomConfirm(message, title = '真的要刪除嗎？', imgSrc = 'sad_shiba.png') {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const titleEl = modal.querySelector('.confirm-header h3');
+    const msgEl = document.getElementById('confirm-message');
+    const imgEl = modal.querySelector('.confirm-cute-img');
+    
+    // 設定自訂內容
+    titleEl.textContent = title;
+    msgEl.innerHTML = message.replace(/\n/g, '<br>');
+    imgEl.src = imgSrc;
+    
+    modal.classList.remove('hidden');
+    
+    const btnYes = document.getElementById('btn-confirm-yes');
+    const btnNo = document.getElementById('btn-confirm-no');
+    
+    const cleanup = (result) => {
+      modal.classList.add('hidden');
+      
+      const newBtnYes = btnYes.cloneNode(true);
+      const newBtnNo = btnNo.cloneNode(true);
+      btnYes.parentNode.replaceChild(newBtnYes, btnYes);
+      btnNo.parentNode.replaceChild(newBtnNo, btnNo);
+      
+      resolve(result);
+    };
+    
+    // 綁定監聽器到當下 DOM 最新對象上
+    document.getElementById('btn-confirm-yes').addEventListener('click', () => cleanup(true));
+    document.getElementById('btn-confirm-no').addEventListener('click', () => cleanup(false));
   });
 }

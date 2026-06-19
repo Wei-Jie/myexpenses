@@ -733,6 +733,21 @@
     </div>
   </div>
 
+  <!-- 🗑️ 自訂可愛確認對話框 (Custom Confirm Modal) [NEW] -->
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-content card confirm-card">
+      <div class="confirm-header">
+        <img src="sad_shiba.png" alt="哭哭柴柴" class="confirm-cute-img">
+        <h3>真的要刪除嗎？</h3>
+        <p id="confirm-message">這筆帳目將會永遠消失喔... (ಥ_ಥ)</p>
+      </div>
+      <div class="button-group-row">
+        <button type="button" id="btn-confirm-yes" class="btn btn-danger">確認刪除</button>
+        <button type="button" id="btn-confirm-no" class="btn btn-secondary">留著帳目</button>
+      </div>
+    </div>
+  </div>
+
   <!-- JavaScript 核心邏輯 -->
   <script src="app.js?v=20260618_08"></script>
 </body>
