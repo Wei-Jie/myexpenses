@@ -42,7 +42,7 @@ function registerServiceWorker() {
 }
 
 // 1. 更版快取檢測與版本設定 (Cache Busting)
-const APP_VERSION = '20260618_14';
+const APP_VERSION = '20260618_15';
 function setupAppVersion() {
   console.log(`智慧記帳系統 (Firebase Auth 版) 啟動，版本號: ${APP_VERSION}`);
   const lastVersion = localStorage.getItem('app_version');
