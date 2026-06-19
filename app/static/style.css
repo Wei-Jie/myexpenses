@@ -1372,3 +1372,83 @@ select:focus {
   }
 }
 
+/* ==========================================================================
+   21. 帳本切換選單與共享協作樣式 [NEW]
+   ========================================================================== */
+.ledger-selector-container {
+  display: flex;
+  align-items: center;
+  margin-left: 10px;
+}
+
+.ledger-select {
+  padding: 6px 12px;
+  font-family: 'Fredoka', 'M PLUS Rounded 1c', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  background-color: var(--card-bg);
+  border: 2px solid var(--primary-light);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.ledger-select:hover {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 8px rgba(141, 110, 99, 0.15);
+  transform: scale(1.02);
+}
+
+.ledger-select:focus {
+  border-color: var(--primary-color);
+}
+
+/* 共享列表項目的微調 */
+.share-list-box .manager-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-xs);
+  font-size: 0.85rem;
+}
+
+.share-list-box .manager-list li span {
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.share-list-box .manager-list li button {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  height: auto;
+}
+
+/* 手機版 RWD 微調 */
+@media (max-width: 600px) {
+  .ledger-selector-container {
+    margin-left: 5px;
+  }
+  
+  .ledger-select {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    max-width: 120px;
+  }
+  
+  .share-invite-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .share-invite-row button {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+}
+

@@ -70,6 +70,12 @@
       <div class="header-logo">
         <span class="logo-icon">💰</span>
         <h1>智慧記帳</h1>
+        <!-- 帳本切換選單 -->
+        <div class="ledger-selector-container hidden" id="ledger-select-wrapper">
+          <select id="ledger-select" class="ledger-select">
+            <!-- 由 app.js 動態渲染 -->
+          </select>
+        </div>
       </div>
       <div class="supabase-status" id="connection-status">
         <span class="status-indicator disconnected"></span>
@@ -574,6 +580,40 @@
           <div class="list-manager" id="recurring-settings-container">
             <!-- 由 app.js 動態渲染 -->
             <p class="center-text">載入設定中...</p>
+          </div>
+        </div>
+
+        <!-- [NEW] 帳本協作與共享管理卡片 -->
+        <div class="card m-t-20">
+          <h3>👥 帳本協作與共享管理</h3>
+          <p class="description">在此邀請家人共同編輯您的帳本。被邀請的人在登入後，將可以在畫面上方切換至您的帳本，共同讀寫您的消費、代購與設定項目。</p>
+          
+          <div class="share-manager-container">
+            <!-- 邀請區域 -->
+            <div class="share-invite-row" style="display: flex; align-items: center;">
+              <div class="form-group flex-1" style="margin-bottom: 0;">
+                <input type="email" id="share-collaborator-email" placeholder="家人的 Email (例如：wife@example.com)" style="width: 100%;">
+              </div>
+              <button id="btn-add-share" class="btn btn-secondary m-l-10" style="white-space: nowrap; height: 42px; padding: 0 16px;">邀請共享</button>
+            </div>
+            
+            <div class="grid-2-col m-t-15">
+              <!-- 我共享給誰 -->
+              <div class="share-list-box card" style="background: rgba(141, 110, 99, 0.02); padding: 12px; margin-bottom: 0;">
+                <h4 style="font-size: 0.95rem; margin-top: 0; color: var(--text-primary);">📤 我共享給誰 (協作者)</h4>
+                <ul class="manager-list" id="my-shares-list" style="margin-bottom: 0; max-height: 150px; overflow-y: auto;">
+                  <li>載入中...</li>
+                </ul>
+              </div>
+              
+              <!-- 誰共享給我 -->
+              <div class="share-list-box card" style="background: rgba(141, 110, 99, 0.02); padding: 12px; margin-bottom: 0;">
+                <h4 style="font-size: 0.95rem; margin-top: 0; color: var(--text-primary);">📥 誰共享給我 (可切換的帳本)</h4>
+                <ul class="manager-list" id="shares-to-me-list" style="margin-bottom: 0; max-height: 150px; overflow-y: auto;">
+                  <li>載入中...</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
 

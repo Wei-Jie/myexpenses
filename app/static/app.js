@@ -8,6 +8,10 @@ let paymentsCache = [];
 let transactionsCache = [];
 let autocompleteList = [];
 
+// 當前正在存取的帳本擁有者 (用於共享帳本，預設為當前登入者)
+let currentLedgerOwnerUid = null;
+let currentLedgerOwnerEmail = null;
+
 // 當前選取的月份 (預設為今天所在的月份)
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth() + 1; // 1-indexed
@@ -104,11 +108,16 @@ function setupAuthListener() {
   firebase.auth().onAuthStateChanged(async (user) => {
     const loginOverlay = document.getElementById('login-overlay');
     const logoutBtn = document.getElementById('btn-logout');
+    const ledgerWrapper = document.getElementById('ledger-select-wrapper');
     
     if (user) {
       console.log('帳本已解鎖，使用者:', user.email);
       loginOverlay.classList.add('hidden');
       logoutBtn.classList.remove('hidden');
+      
+      // 初始化當前帳本擁有者為自己
+      currentLedgerOwnerUid = user.uid;
+      currentLedgerOwnerEmail = user.email;
       
       // 確保連線狀態正確
       const statusIndicator = document.querySelector('.status-indicator');
@@ -116,8 +125,28 @@ function setupAuthListener() {
       statusIndicator.className = 'status-indicator connected';
       statusText.textContent = '已解鎖 (Firebase)';
       
-      // 先在背景執行舊資料自癒補齊 UID
-      await selfHealMissingUid(user.uid);
+      // A. 背景向 users 集合寫入/更新使用者 Email 與 UID 關係
+      try {
+        await db.collection('users').doc(user.uid).set({
+          email: user.email,
+          updated_at: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch (err) {
+        console.error('更新使用者 Email 記錄失敗 (請確認 Rules 是否已部署):', err);
+      }
+      
+      // B. 先在背景執行舊資料自癒補齊 UID (加上標記防重複執行，避免權限與效能阻力)
+      if (localStorage.getItem('self_healed_uid') !== user.uid) {
+        try {
+          await selfHealMissingUid(user.uid);
+          localStorage.setItem('self_healed_uid', user.uid);
+        } catch (healErr) {
+          console.warn('[自癒機制] 執行出錯 (可能已是隔離版，忽略此警告):', healErr);
+        }
+      }
+      
+      // C. 載入並建立共享帳本關係與切換選單
+      await initLedgerSharing();
       
       // 載入與初始化雲端資料
       await loadAndInitializeData();
@@ -125,6 +154,7 @@ function setupAuthListener() {
       console.log('帳本鎖定中，請先解鎖登入');
       loginOverlay.classList.remove('hidden');
       logoutBtn.classList.add('hidden');
+      if (ledgerWrapper) ledgerWrapper.classList.add('hidden');
       showConnectionError();
       
       // 清空本地快取，保護隱私
@@ -132,6 +162,8 @@ function setupAuthListener() {
       paymentsCache = [];
       transactionsCache = [];
       autocompleteList = [];
+      currentLedgerOwnerUid = null;
+      currentLedgerOwnerEmail = null;
     }
   });
 }
@@ -263,6 +295,12 @@ function setupEventListeners() {
   // 分類與付款新增
   document.getElementById('btn-add-category').addEventListener('click', handleAddCategory);
   document.getElementById('btn-add-payment').addEventListener('click', handleAddPayment);
+
+  // [NEW] 帳本共享邀請
+  const btnAddShare = document.getElementById('btn-add-share');
+  if (btnAddShare) {
+    btnAddShare.addEventListener('click', handleAddShare);
+  }
 }
 
 // 5. 分頁切換
@@ -308,10 +346,11 @@ function updateWeekDay(dateInputId, weekdayInputId) {
 async function loadAndInitializeData() {
   if (!db || !firebase.auth().currentUser) return;
   
-  const uid = firebase.auth().currentUser.uid;
+  // 優先使用當前切換的帳本擁有者 UID
+  const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
   
   try {
-    // A. 載入分類 (限定目前登入者的 UID)
+    // A. 載入分類 (限定當前帳本的 UID)
     let catSnap = await db.collection('categories')
       .where('uid', '==', uid)
       .get();
@@ -355,7 +394,7 @@ async function loadAndInitializeData() {
     
     categoriesCache.sort((a, b) => a.display_order - b.display_order);
     
-    // B. 載入付款方式 (限定目前登入者的 UID)
+    // B. 載入付款方式 (限定當前帳本的 UID)
     let paySnap = await db.collection('payment_methods')
       .where('uid', '==', uid)
       .get();
@@ -396,18 +435,33 @@ async function loadAndInitializeData() {
       paymentsCache.push({ id: doc.id, ...doc.data() });
     });
     
-    // C. 載入品項歷史快取 (用於智慧推薦，限目前登入者，前 500 筆)
-    const itemsSnap = await db.collection('transactions')
+    // C. 一次性載入前 5000 筆歷史交易明細至快取 (繞過複合索引，在前端進行高效月份篩選)
+    console.log(`[快取機制] 正在載入帳本 ${uid} 的歷史交易資料...`);
+    const transSnap = await db.collection('transactions')
       .where('uid', '==', uid)
-      .limit(500)
+      .limit(5000)
       .get();
       
-    const rawItems = [];
-    itemsSnap.forEach(doc => rawItems.push(doc.data()));
-    rawItems.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    transactionsCache = [];
+    transSnap.forEach(doc => {
+      transactionsCache.push({ id: doc.id, ...doc.data() });
+    });
     
+    // 依日期與建立時間排序 (與原本 Firestore 排序規則一致)
+    transactionsCache.sort((a, b) => {
+      const dateDiff = new Date(b.date) - new Date(a.date);
+      if (dateDiff !== 0) return dateDiff;
+      
+      const tA = a.created_at ? (a.created_at.seconds ? a.created_at.seconds * 1000 : a.created_at) : 0;
+      const tB = b.created_at ? (b.created_at.seconds ? b.created_at.seconds * 1000 : b.created_at) : 0;
+      return tB - tA;
+    });
+    
+    console.log(`[快取機制] 成功快取了 ${transactionsCache.length} 筆交易`);
+    
+    // 從快取直接生成 autocompleteList 智慧推薦提示
     autocompleteList = [];
-    rawItems.forEach(data => {
+    transactionsCache.slice(0, 500).forEach(data => {
       autocompleteList.push({
         item_name: data.item_name,
         category_name: data.category_name,
@@ -624,8 +678,9 @@ async function handleSaveExpense(e) {
     amount = Math.abs(amount);
   }
   
+  const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
   const payload = {
-    uid: firebase.auth().currentUser.uid,
+    uid: uid,
     date,
     week_day: weekDay,
     item_name: item,
@@ -648,7 +703,19 @@ async function handleSaveExpense(e) {
   if (navigator.onLine && db && firebase.auth().currentUser) {
     try {
       const toSend = { ...payload, created_at: firebase.firestore.FieldValue.serverTimestamp() };
-      await db.collection('transactions').add(toSend);
+      const docRef = await db.collection('transactions').add(toSend);
+      
+      // 同步插入至本地快取
+      const newDoc = { id: docRef.id, ...payload };
+      transactionsCache.unshift(newDoc);
+      // 重新排序快取
+      transactionsCache.sort((a, b) => {
+        const dateDiff = new Date(b.date) - new Date(a.date);
+        if (dateDiff !== 0) return dateDiff;
+        const tA = a.created_at ? (a.created_at.seconds ? a.created_at.seconds * 1000 : a.created_at) : 0;
+        const tB = b.created_at ? (b.created_at.seconds ? b.created_at.seconds * 1000 : b.created_at) : 0;
+        return tB - tA;
+      });
       
       showToast('🎉 記帳成功！');
       
@@ -726,47 +793,9 @@ async function syncOfflineQueue() {
 
 // 12. 載入明細列表
 async function loadTransactions() {
-  if (!db || !firebase.auth().currentUser) return;
-  
   document.getElementById('trans-month-label').textContent = `${currentYear}年 ${currentMonth}月`;
-  
-  const startDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
-  let nextYr = currentYear;
-  let nextMth = currentMonth + 1;
-  if (nextMth > 12) {
-    nextMth = 1;
-    nextYr++;
-  }
-  const endDate = `${nextYr}-${String(nextMth).padStart(2, '0')}-01`;
-  
-  try {
-    // 避雷重要設計：前端進行排序，防止手動建立 composite index 的繁瑣手續
-    const snap = await db.collection('transactions')
-      .where('uid', '==', firebase.auth().currentUser.uid)
-      .where('date', '>=', startDate)
-      .where('date', '<', endDate)
-      .get();
-      
-    transactionsCache = [];
-    snap.forEach(doc => {
-      transactionsCache.push({ id: doc.id, ...doc.data() });
-    });
-    
-    // 在前端用 JS 做排序
-    transactionsCache.sort((a, b) => {
-      const dateDiff = new Date(b.date) - new Date(a.date);
-      if (dateDiff !== 0) return dateDiff;
-      
-      const tA = a.created_at ? (a.created_at.seconds ? a.created_at.seconds * 1000 : a.created_at) : 0;
-      const tB = b.created_at ? (b.created_at.seconds ? b.created_at.seconds * 1000 : b.created_at) : 0;
-      return tB - tA;
-    });
-    
-    renderTransactionTable();
-  } catch (err) {
-    console.error('載入流水帳失敗:', err);
-    showToast('❌ 載入明細失敗', 'error');
-  }
+  // 直接進行前端渲染 (資料已在 loadAndInitializeData 中全量快取至 transactionsCache)
+  renderTransactionTable();
 }
 
 function renderTransactionTable() {
@@ -777,13 +806,29 @@ function renderTransactionTable() {
   const filterCatName = document.getElementById('filter-category').value;
   const filterPayName = document.getElementById('filter-payment').value;
   
+  // 計算當月日期區間
+  const startDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
+  let nextYr = currentYear;
+  let nextMth = currentMonth + 1;
+  if (nextMth > 12) {
+    nextMth = 1;
+    nextYr++;
+  }
+  const endDate = `${nextYr}-${String(nextMth).padStart(2, '0')}-01`;
+  
   const filtered = transactionsCache.filter(t => {
+    // 1. 月份過濾
+    const matchesMonth = t.date >= startDate && t.date < endDate;
+    // 2. 搜尋關鍵字過濾
     const matchesSearch = 
       (t.item_name && t.item_name.toLowerCase().includes(searchQuery)) ||
       (t.remark && t.remark.toLowerCase().includes(searchQuery));
+    // 3. 分類過濾
     const matchesCat = !filterCatName || t.category_name === filterCatName;
+    // 4. 付款方式過濾
     const matchesPay = !filterPayName || t.payment_method_name === filterPayName;
-    return matchesSearch && matchesCat && matchesPay;
+    
+    return matchesMonth && matchesSearch && matchesCat && matchesPay;
   });
   
   if (filtered.length === 0) {
@@ -926,6 +971,31 @@ async function handleUpdateExpense(e) {
       is_fixed: isFixed
     });
     
+    // 同步更新本地快取
+    const cacheIdx = transactionsCache.findIndex(t => t.id === id);
+    if (cacheIdx !== -1) {
+      transactionsCache[cacheIdx] = {
+        ...transactionsCache[cacheIdx],
+        date,
+        week_day: weekDay,
+        item_name: item,
+        payment_method_name: paymentName,
+        amount,
+        category_name: categoryName,
+        remark: remark || null,
+        is_fixed: isFixed
+      };
+      
+      // 重新排序快取
+      transactionsCache.sort((a, b) => {
+        const dateDiff = new Date(b.date) - new Date(a.date);
+        if (dateDiff !== 0) return dateDiff;
+        const tA = a.created_at ? (a.created_at.seconds ? a.created_at.seconds * 1000 : a.created_at) : 0;
+        const tB = b.created_at ? (b.created_at.seconds ? b.created_at.seconds * 1000 : b.created_at) : 0;
+        return tB - tA;
+      });
+    }
+    
     showToast('🎉 流水帳更新成功！');
     document.getElementById('edit-modal').classList.add('hidden');
     loadTransactions();
@@ -942,6 +1012,10 @@ async function handleDeleteExpense(id) {
   
   try {
     await db.collection('transactions').doc(id).delete();
+    
+    // 同步移除本地快取
+    transactionsCache = transactionsCache.filter(t => t.id !== id);
+    
     showToast('🗑️ 明細已成功刪除');
     loadTransactions();
   } catch (err) {
@@ -972,13 +1046,8 @@ async function updateDashboardData() {
   const endDate = `${nextYr}-${String(nextMth).padStart(2, '0')}-01`;
   
   try {
-    const uid = firebase.auth().currentUser.uid;
-    const transSnap = await db.collection('transactions')
-      .where('uid', '==', uid)
-      .where('date', '>=', startDate)
-      .where('date', '<', endDate)
-      .get();
-      
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
+    
     const daigouSnap = await db.collection('daigou')
       .where('uid', '==', uid)
       .get();
@@ -1007,8 +1076,10 @@ async function updateDashboardData() {
     const dailySums = {};
     let cardBillPayments = [];
     
-    transSnap.forEach(doc => {
-      const t = doc.data();
+    // 從快取直接過濾出當月交易明細 (免 Composite Index 避雷設計)
+    const currentMonthTransactions = transactionsCache.filter(t => t.date >= startDate && t.date < endDate);
+    
+    currentMonthTransactions.forEach(t => {
       const amt = parseFloat(t.amount);
       const payment = paymentsCache.find(p => p.name === t.payment_method_name);
       const isCredit = payment ? payment.is_credit : false;
@@ -1016,8 +1087,9 @@ async function updateDashboardData() {
       
       // 自動自我修復：只要品項包含「卡費」，且分類不是「轉帳」，自動將資料庫該筆分類改為「轉帳」
       if (t.item_name.includes('卡費') && catName !== '轉帳') {
-        console.log(`[自動自我修復] 發現卡費支出文檔 ${doc.id} 分類非「轉帳」，自動修正為「轉帳」`);
-        db.collection('transactions').doc(doc.id).update({ category_name: '轉帳' }).catch(err => console.error('自癒修復卡費分類失敗:', err));
+        console.log(`[自動自我修復] 發現卡費支出文檔 ${t.id} 分類非「轉帳」，自動修正為「轉帳」`);
+        db.collection('transactions').doc(t.id).update({ category_name: '轉帳' }).catch(err => console.error('自癒修復卡費分類失敗:', err));
+        t.category_name = '轉帳'; // 同步修改本地快取
         catName = '轉帳'; // 前端當下直接套用，免重整
       }
       
@@ -1209,8 +1281,9 @@ async function loadDaigouData() {
   if (!db || !firebase.auth().currentUser) return;
   
   try {
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
     const snap = await db.collection('daigou')
-      .where('uid', '==', firebase.auth().currentUser.uid)
+      .where('uid', '==', uid)
       .get();
     
     const unpaidBody = document.getElementById('daigou-unpaid-body');
@@ -1319,9 +1392,9 @@ async function handleSaveDaigou(e) {
   
   if (!db) return;
   
-  try {
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
     await db.collection('daigou').add({
-      uid: firebase.auth().currentUser.uid,
+      uid: uid,
       date,
       item_name: item,
       amount,
@@ -1434,9 +1507,10 @@ async function importExpenseRows(rows, progressBar, progressText) {
       catName = '轉帳';
     }
     
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
     let category = categoriesCache.find(c => c.name === catName);
     if (!category) {
-      const ref = await db.collection('categories').add({ uid: firebase.auth().currentUser.uid, name: catName, display_order: categoriesCache.length + 1 });
+      const ref = await db.collection('categories').add({ uid: uid, name: catName, display_order: categoriesCache.length + 1 });
       category = { id: ref.id, name: catName };
       categoriesCache.push(category);
     }
@@ -1445,7 +1519,7 @@ async function importExpenseRows(rows, progressBar, progressText) {
     let payment = paymentsCache.find(p => p.name === payName);
     if (!payment) {
       const isCredit = payName !== '現金' && payName !== '收入' && payName !== 'LineBank';
-      const ref = await db.collection('payment_methods').add({ uid: firebase.auth().currentUser.uid, name: payName, is_credit: isCredit });
+      const ref = await db.collection('payment_methods').add({ uid: uid, name: payName, is_credit: isCredit });
       payment = { id: ref.id, name: payName, is_credit: isCredit };
       paymentsCache.push(payment);
     }
@@ -1468,7 +1542,7 @@ async function importExpenseRows(rows, progressBar, progressText) {
     const isFixed = row['固定開銷'] && row['固定開銷'].includes('固定');
     
     transactionsToInsert.push({
-      uid: firebase.auth().currentUser.uid,
+      uid: uid,
       date: dateStr,
       week_day: weekDay,
       item_name: itemName,
@@ -1510,8 +1584,10 @@ async function importExpenseRows(rows, progressBar, progressText) {
 async function importDaigouRows(rows, progressBar, progressText) {
   if (!db) throw new Error('Firestore 未連線');
   
-  // 先抓取目前所有 daigou 的數據，防止重複匯入
-  const existingSnap = await db.collection('daigou').get();
+  const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
+  
+  // 先抓取目前所有 daigou 的數據，防止重複匯入 (加上 uid 以符合安全規則)
+  const existingSnap = await db.collection('daigou').where('uid', '==', uid).get();
   const existingKeys = new Set();
   existingSnap.forEach(doc => {
     const d = doc.data();
@@ -1541,7 +1617,7 @@ async function importDaigouRows(rows, progressBar, progressText) {
     }
     
     daigousToInsert.push({
-      uid: firebase.auth().currentUser.uid,
+      uid: uid,
       date: dateStr,
       item_name: row['項目'].trim(),
       amount,
@@ -1593,8 +1669,9 @@ async function handleExportCSV() {
   const endDate = `${nextYr}-${String(nextMth).padStart(2, '0')}-01`;
   
   try {
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
     const snap = await db.collection('transactions')
-      .where('uid', '==', firebase.auth().currentUser.uid)
+      .where('uid', '==', uid)
       .where('date', '>=', startDate)
       .where('date', '<', endDate)
       .get();
@@ -1649,8 +1726,9 @@ async function handleExportDaigouCSV() {
   if (!db) return;
   
   try {
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
     const snap = await db.collection('daigou')
-      .where('uid', '==', firebase.auth().currentUser.uid)
+      .where('uid', '==', uid)
       .get();
     const daigous = [];
     snap.forEach(doc => daigous.push(doc.data()));
@@ -1764,7 +1842,8 @@ async function handleAddCategory() {
   if (!name || !db) return;
   
   try {
-    await db.collection('categories').add({ uid: firebase.auth().currentUser.uid, name, display_order: categoriesCache.length + 1 });
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
+    await db.collection('categories').add({ uid: uid, name, display_order: categoriesCache.length + 1 });
     showToast('🎉 分類新增成功！');
     input.value = '';
     loadAndInitializeData();
@@ -1780,7 +1859,8 @@ async function handleAddPayment() {
   if (!name || !db) return;
   
   try {
-    await db.collection('payment_methods').add({ uid: firebase.auth().currentUser.uid, name, is_credit: isCredit });
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
+    await db.collection('payment_methods').add({ uid: uid, name, is_credit: isCredit });
     showToast('🎉 付款管道新增成功！');
     input.value = '';
     document.getElementById('new-payment-credit').checked = false;
@@ -2014,14 +2094,8 @@ async function loadRecurringExpenses() {
   }
   
   try {
-    const snap = await db.collection('transactions')
-      .where('uid', '==', firebase.auth().currentUser.uid)
-      .get();
-    const allTransactions = [];
-    snap.forEach(doc => {
-      allTransactions.push({ id: doc.id, ...doc.data() });
-    });
-    
+    // 直接複製全域的交易快取進行過濾計算，免去資料庫查詢
+    const allTransactions = [...transactionsCache];
     allTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
     
     const config = getRecurringConfig();
@@ -2283,5 +2357,219 @@ async function selfHealMissingUid(uid) {
   
   if (healedCount > 0) {
     showToast(`🎉 系統已自動將 ${healedCount} 筆歷史資料補齊 UID，成功移入您的個人帳本！`);
+  }
+}
+
+// ==========================================================================
+// 24. 多帳戶帳本共享與切換邏輯 [NEW]
+// ==========================================================================
+
+// 初始化共享帳本狀態與切換選單
+async function initLedgerSharing() {
+  if (!db || !firebase.auth().currentUser) return;
+  const user = firebase.auth().currentUser;
+  
+  try {
+    // 1. 撈取「我共享給誰」
+    const mySharesSnap = await db.collection('book_shares')
+      .where('owner_uid', '==', user.uid)
+      .get();
+    const myShares = [];
+    mySharesSnap.forEach(doc => myShares.push(doc.data()));
+    
+    // 2. 撈取「誰共享給我」
+    const sharesToMeSnap = await db.collection('book_shares')
+      .where('collaborator_uid', '==', user.uid)
+      .get();
+    const sharesToMe = [];
+    sharesToMeSnap.forEach(doc => sharesToMe.push(doc.data()));
+    
+    // 3. 渲染「設定」頁面中的共享管理列表
+    renderShareManagement(myShares, sharesToMe);
+    
+    // 4. 動態渲染與初始化頂部「切換帳本」下拉選單
+    const wrapper = document.getElementById('ledger-select-wrapper');
+    const select = document.getElementById('ledger-select');
+    
+    if (wrapper && select) {
+      // 如果有人共享給我，就顯示切換下拉選單，否則隱藏
+      if (sharesToMe.length > 0) {
+        wrapper.classList.remove('hidden');
+        
+        // 重新填充下拉選項
+        select.innerHTML = '';
+        
+        // 選項一：自己的個人帳本
+        const myOpt = document.createElement('option');
+        myOpt.value = user.uid;
+        myOpt.textContent = `個人帳本 (${user.email})`;
+        if (currentLedgerOwnerUid === user.uid) {
+          myOpt.selected = true;
+        }
+        select.appendChild(myOpt);
+        
+        // 選項二+：別人共享給我的帳本
+        sharesToMe.forEach(share => {
+          const opt = document.createElement('option');
+          opt.value = share.owner_uid;
+          opt.textContent = `共用帳本 (${share.owner_email})`;
+          if (currentLedgerOwnerUid === share.owner_uid) {
+            opt.selected = true;
+          }
+          select.appendChild(opt);
+        });
+        
+        // 綁定 change 事件（防止重複綁定）
+        select.onchange = async (e) => {
+          const targetUid = e.target.value;
+          const targetText = select.options[select.selectedIndex].text;
+          
+          showToast(`🔄 正在切換至 ${targetText}...`);
+          
+          currentLedgerOwnerUid = targetUid;
+          // 從下拉選單名稱推導 owner email
+          const matchEmail = targetText.match(/\(([^)]+)\)/);
+          currentLedgerOwnerEmail = matchEmail ? matchEmail[1] : user.email;
+          
+          // 重新載入所有雲端資料與頁面
+          await loadAndInitializeData();
+          showToast(`🎉 成功切換至 ${targetText}！`);
+        };
+      } else {
+        // 沒有共享給我，則強迫設為自己，並隱藏選單
+        wrapper.classList.add('hidden');
+        currentLedgerOwnerUid = user.uid;
+        currentLedgerOwnerEmail = user.email;
+      }
+    }
+  } catch (err) {
+    console.error('初始化共享帳本失敗 (請確認 Rules 是否已部署):', err);
+  }
+}
+
+// 渲染設定頁面的共享管理卡片列表
+function renderShareManagement(myShares, sharesToMe) {
+  const mySharesList = document.getElementById('my-shares-list');
+  const sharesToMeList = document.getElementById('shares-to-me-list');
+  
+  if (mySharesList) {
+    mySharesList.innerHTML = '';
+    if (myShares.length === 0) {
+      mySharesList.innerHTML = '<li class="center-text" style="color: var(--text-secondary);">尚未共享給任何人</li>';
+    } else {
+      myShares.forEach(share => {
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <span>${share.collaborator_email}</span>
+          <button class="btn btn-danger btn-sm" onclick="handleCancelShare('${share.collaborator_uid}', '${share.collaborator_email}')">取消</button>
+        `;
+        mySharesList.appendChild(li);
+      });
+    }
+  }
+  
+  if (sharesToMeList) {
+    sharesToMeList.innerHTML = '';
+    if (sharesToMe.length === 0) {
+      sharesToMeList.innerHTML = '<li class="center-text" style="color: var(--text-secondary);">目前無人共享給您</li>';
+    } else {
+      sharesToMe.forEach(share => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${share.owner_email}</span>`;
+        sharesToMeList.appendChild(li);
+      });
+    }
+  }
+}
+
+// 處理新增邀請共享
+async function handleAddShare() {
+  if (!db || !firebase.auth().currentUser) return;
+  const user = firebase.auth().currentUser;
+  
+  const emailInput = document.getElementById('share-collaborator-email');
+  if (!emailInput) return;
+  
+  const email = emailInput.value.trim().toLowerCase();
+  
+  if (!email) {
+    showToast('❌ 請輸入要共享的 Email', 'error');
+    return;
+  }
+  
+  if (email === user.email.toLowerCase()) {
+    showToast('❌ 不能共享給自己喔！', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('btn-add-share');
+  btn.disabled = true;
+  btn.textContent = '搜尋中...';
+  
+  try {
+    // 1. 查詢此 Email 註冊者的 UID
+    const userSnap = await db.collection('users')
+      .where('email', '==', email)
+      .get();
+      
+    if (userSnap.empty) {
+      showToast('❌ 該 Email 尚未在此記帳系統中登入過，請請他先登入一次！', 'error');
+      btn.disabled = false;
+      btn.textContent = '邀請共享';
+      return;
+    }
+    
+    let collaboratorUid = null;
+    userSnap.forEach(doc => {
+      collaboratorUid = doc.id;
+    });
+    
+    // 2. 建立 book_shares 紀錄
+    const shareId = `${user.uid}_${collaboratorUid}`;
+    await db.collection('book_shares').doc(shareId).set({
+      owner_uid: user.uid,
+      owner_email: user.email,
+      collaborator_uid: collaboratorUid,
+      collaborator_email: email,
+      created_at: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    
+    showToast('🎉 共享邀請成功！已加入協作者。');
+    emailInput.value = '';
+    
+    // 重新整理共享狀態
+    await initLedgerSharing();
+  } catch (err) {
+    console.error('邀請共享失敗:', err);
+    showToast('❌ 邀請共享失敗，請確認資料庫權限', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '邀請共享';
+  }
+}
+
+// 處理取消共享
+async function handleCancelShare(collaboratorUid, collaboratorEmail) {
+  if (!db || !firebase.auth().currentUser) return;
+  const user = firebase.auth().currentUser;
+  
+  const confirmed = await showCustomConfirm(
+    `您確定要取消對 [${collaboratorEmail}] 的帳本共享嗎？\n取消後對方將無法再讀寫或查看您的帳本。`,
+    '確認取消共享嗎？',
+    'sad_shiba.png',
+    '確認取消',
+    '保留共享'
+  );
+  if (!confirmed) return;
+  
+  try {
+    const shareId = `${user.uid}_${collaboratorUid}`;
+    await db.collection('book_shares').doc(shareId).delete();
+    
+    showToast('🔒 已取消該帳本共享關係');
+    await initLedgerSharing();
+  } catch (err) {
+    console.error('取消共享失敗:', err);
+    showToast('❌ 取消共享失敗', 'error');
   }
 }
