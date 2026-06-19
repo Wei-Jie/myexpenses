@@ -42,7 +42,7 @@ function registerServiceWorker() {
 }
 
 // 1. 更版快取檢測與版本設定 (Cache Busting)
-const APP_VERSION = '20260618_16';
+const APP_VERSION = '20260618_17';
 function setupAppVersion() {
   console.log(`智慧記帳系統 (Firebase Auth 版) 啟動，版本號: ${APP_VERSION}`);
   const lastVersion = localStorage.getItem('app_version');
@@ -115,6 +115,9 @@ function setupAuthListener() {
       const statusText = document.querySelector('.status-text');
       statusIndicator.className = 'status-indicator connected';
       statusText.textContent = '已解鎖 (Firebase)';
+      
+      // 先在背景執行舊資料自癒補齊 UID
+      await selfHealMissingUid(user.uid);
       
       // 載入與初始化雲端資料
       await loadAndInitializeData();
@@ -305,11 +308,16 @@ function updateWeekDay(dateInputId, weekdayInputId) {
 async function loadAndInitializeData() {
   if (!db || !firebase.auth().currentUser) return;
   
+  const uid = firebase.auth().currentUser.uid;
+  
   try {
-    // A. 載入分類
-    let catSnap = await db.collection('categories').orderBy('display_order').get();
+    // A. 載入分類 (限定目前登入者的 UID)
+    let catSnap = await db.collection('categories')
+      .where('uid', '==', uid)
+      .get();
+      
     if (catSnap.empty) {
-      console.log('偵測到全新資料庫，自動初始化基礎分類資料...');
+      console.log('偵測到此帳戶無分類資料，自動初始化基礎分類資料...');
       const defaultCats = [
         { name: '食', display_order: 1 },
         { name: '衣', display_order: 2 },
@@ -331,10 +339,13 @@ async function loadAndInitializeData() {
       const batch = db.batch();
       defaultCats.forEach(cat => {
         const ref = db.collection('categories').doc();
-        batch.set(ref, cat);
+        batch.set(ref, { ...cat, uid: uid });
       });
       await batch.commit();
-      catSnap = await db.collection('categories').orderBy('display_order').get();
+      
+      catSnap = await db.collection('categories')
+        .where('uid', '==', uid)
+        .get();
     }
     
     categoriesCache = [];
@@ -342,10 +353,15 @@ async function loadAndInitializeData() {
       categoriesCache.push({ id: doc.id, ...doc.data() });
     });
     
-    // B. 載入付款方式
-    let paySnap = await db.collection('payment_methods').get();
+    categoriesCache.sort((a, b) => a.display_order - b.display_order);
+    
+    // B. 載入付款方式 (限定目前登入者的 UID)
+    let paySnap = await db.collection('payment_methods')
+      .where('uid', '==', uid)
+      .get();
+      
     if (paySnap.empty) {
-      console.log('偵測到全新資料庫，自動初始化基礎付款管道...');
+      console.log('偵測到此帳戶無付款管道，自動初始化基礎付款管道...');
       const defaultPays = [
         { name: '現金', is_credit: false },
         { name: 'LineBank', is_credit: false },
@@ -366,10 +382,13 @@ async function loadAndInitializeData() {
       const batch = db.batch();
       defaultPays.forEach(pay => {
         const ref = db.collection('payment_methods').doc();
-        batch.set(ref, pay);
+        batch.set(ref, { ...pay, uid: uid });
       });
       await batch.commit();
-      paySnap = await db.collection('payment_methods').get();
+      
+      paySnap = await db.collection('payment_methods')
+        .where('uid', '==', uid)
+        .get();
     }
     
     paymentsCache = [];
@@ -377,15 +396,18 @@ async function loadAndInitializeData() {
       paymentsCache.push({ id: doc.id, ...doc.data() });
     });
     
-    // C. 載入品項歷史快取 (用於智慧推薦，限前 500 筆)
+    // C. 載入品項歷史快取 (用於智慧推薦，限目前登入者，前 500 筆)
     const itemsSnap = await db.collection('transactions')
-      .orderBy('created_at', 'desc')
+      .where('uid', '==', uid)
       .limit(500)
       .get();
       
+    const rawItems = [];
+    itemsSnap.forEach(doc => rawItems.push(doc.data()));
+    rawItems.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    
     autocompleteList = [];
-    itemsSnap.forEach(doc => {
-      const data = doc.data();
+    rawItems.forEach(data => {
       autocompleteList.push({
         item_name: data.item_name,
         category_name: data.category_name,
@@ -603,6 +625,7 @@ async function handleSaveExpense(e) {
   }
   
   const payload = {
+    uid: firebase.auth().currentUser.uid,
     date,
     week_day: weekDay,
     item_name: item,
@@ -719,6 +742,7 @@ async function loadTransactions() {
   try {
     // 避雷重要設計：前端進行排序，防止手動建立 composite index 的繁瑣手續
     const snap = await db.collection('transactions')
+      .where('uid', '==', firebase.auth().currentUser.uid)
       .where('date', '>=', startDate)
       .where('date', '<', endDate)
       .get();
@@ -948,12 +972,16 @@ async function updateDashboardData() {
   const endDate = `${nextYr}-${String(nextMth).padStart(2, '0')}-01`;
   
   try {
+    const uid = firebase.auth().currentUser.uid;
     const transSnap = await db.collection('transactions')
+      .where('uid', '==', uid)
       .where('date', '>=', startDate)
       .where('date', '<', endDate)
       .get();
       
-    const daigouSnap = await db.collection('daigou').get();
+    const daigouSnap = await db.collection('daigou')
+      .where('uid', '==', uid)
+      .get();
       
     let totalIncome = 0;
     let totalExpense = 0;
@@ -1181,7 +1209,9 @@ async function loadDaigouData() {
   if (!db || !firebase.auth().currentUser) return;
   
   try {
-    const snap = await db.collection('daigou').get();
+    const snap = await db.collection('daigou')
+      .where('uid', '==', firebase.auth().currentUser.uid)
+      .get();
     
     const unpaidBody = document.getElementById('daigou-unpaid-body');
     const paidBody = document.getElementById('daigou-paid-body');
@@ -1291,6 +1321,7 @@ async function handleSaveDaigou(e) {
   
   try {
     await db.collection('daigou').add({
+      uid: firebase.auth().currentUser.uid,
       date,
       item_name: item,
       amount,
@@ -1405,7 +1436,7 @@ async function importExpenseRows(rows, progressBar, progressText) {
     
     let category = categoriesCache.find(c => c.name === catName);
     if (!category) {
-      const ref = await db.collection('categories').add({ name: catName, display_order: categoriesCache.length + 1 });
+      const ref = await db.collection('categories').add({ uid: firebase.auth().currentUser.uid, name: catName, display_order: categoriesCache.length + 1 });
       category = { id: ref.id, name: catName };
       categoriesCache.push(category);
     }
@@ -1414,7 +1445,7 @@ async function importExpenseRows(rows, progressBar, progressText) {
     let payment = paymentsCache.find(p => p.name === payName);
     if (!payment) {
       const isCredit = payName !== '現金' && payName !== '收入' && payName !== 'LineBank';
-      const ref = await db.collection('payment_methods').add({ name: payName, is_credit: isCredit });
+      const ref = await db.collection('payment_methods').add({ uid: firebase.auth().currentUser.uid, name: payName, is_credit: isCredit });
       payment = { id: ref.id, name: payName, is_credit: isCredit };
       paymentsCache.push(payment);
     }
@@ -1437,6 +1468,7 @@ async function importExpenseRows(rows, progressBar, progressText) {
     const isFixed = row['固定開銷'] && row['固定開銷'].includes('固定');
     
     transactionsToInsert.push({
+      uid: firebase.auth().currentUser.uid,
       date: dateStr,
       week_day: weekDay,
       item_name: itemName,
@@ -1509,6 +1541,7 @@ async function importDaigouRows(rows, progressBar, progressText) {
     }
     
     daigousToInsert.push({
+      uid: firebase.auth().currentUser.uid,
       date: dateStr,
       item_name: row['項目'].trim(),
       amount,
@@ -1561,6 +1594,7 @@ async function handleExportCSV() {
   
   try {
     const snap = await db.collection('transactions')
+      .where('uid', '==', firebase.auth().currentUser.uid)
       .where('date', '>=', startDate)
       .where('date', '<', endDate)
       .get();
@@ -1615,7 +1649,9 @@ async function handleExportDaigouCSV() {
   if (!db) return;
   
   try {
-    const snap = await db.collection('daigou').get();
+    const snap = await db.collection('daigou')
+      .where('uid', '==', firebase.auth().currentUser.uid)
+      .get();
     const daigous = [];
     snap.forEach(doc => daigous.push(doc.data()));
     
@@ -1728,7 +1764,7 @@ async function handleAddCategory() {
   if (!name || !db) return;
   
   try {
-    await db.collection('categories').add({ name, display_order: categoriesCache.length + 1 });
+    await db.collection('categories').add({ uid: firebase.auth().currentUser.uid, name, display_order: categoriesCache.length + 1 });
     showToast('🎉 分類新增成功！');
     input.value = '';
     loadAndInitializeData();
@@ -1744,7 +1780,7 @@ async function handleAddPayment() {
   if (!name || !db) return;
   
   try {
-    await db.collection('payment_methods').add({ name, is_credit: isCredit });
+    await db.collection('payment_methods').add({ uid: firebase.auth().currentUser.uid, name, is_credit: isCredit });
     showToast('🎉 付款管道新增成功！');
     input.value = '';
     document.getElementById('new-payment-credit').checked = false;
@@ -1978,7 +2014,9 @@ async function loadRecurringExpenses() {
   }
   
   try {
-    const snap = await db.collection('transactions').get();
+    const snap = await db.collection('transactions')
+      .where('uid', '==', firebase.auth().currentUser.uid)
+      .get();
     const allTransactions = [];
     snap.forEach(doc => {
       allTransactions.push({ id: doc.id, ...doc.data() });
@@ -2206,4 +2244,44 @@ function showCustomConfirm(message, title = '真的要刪除嗎？', imgSrc = 's
     document.getElementById('btn-confirm-yes').addEventListener('click', () => cleanup(true));
     document.getElementById('btn-confirm-no').addEventListener('click', () => cleanup(false));
   });
+}
+
+
+// ==========================================================================
+// 23. 多帳戶舊資料自癒補齊 UID 機製 [NEW]
+// ==========================================================================
+async function selfHealMissingUid(uid) {
+  if (!db) return;
+  console.log('[自癒機制] 開始檢查並補齊歷史舊資料的 UID...');
+  
+  const collections = ['transactions', 'daigou', 'categories', 'payment_methods'];
+  let healedCount = 0;
+  
+  for (const colName of collections) {
+    try {
+      const snap = await db.collection(colName).get();
+      const batch = db.batch();
+      let colHealed = 0;
+      
+      snap.forEach(doc => {
+        const data = doc.data();
+        if (!data.uid) {
+          batch.update(doc.ref, { uid: uid });
+          colHealed++;
+          healedCount++;
+        }
+      });
+      
+      if (colHealed > 0) {
+        await batch.commit();
+        console.log(`[自癒機制] 集合 [${colName}] 成功補齊了 ${colHealed} 筆資料的 UID`);
+      }
+    } catch (e) {
+      console.error(`[自癒機制] 集合 [${colName}] 自癒更新失敗:`, e);
+    }
+  }
+  
+  if (healedCount > 0) {
+    showToast(`🎉 系統已自動將 ${healedCount} 筆歷史資料補齊 UID，成功移入您的個人帳本！`);
+  }
 }
