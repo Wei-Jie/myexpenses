@@ -12,6 +12,9 @@ let autocompleteList = [];
 let currentLedgerOwnerUid = null;
 let currentLedgerOwnerEmail = null;
 
+// 當前驗證畫面模式：false = 登入/解鎖, true = 註冊
+let isSignUpMode = false;
+
 // 當前選取的月份 (預設為今天所在的月份)
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth() + 1; // 1-indexed
@@ -198,6 +201,31 @@ function setupEventListeners() {
 
   // 登入解鎖表單提交
   document.getElementById('login-form').addEventListener('submit', handleLoginSubmit);
+  
+  // 登入/註冊切換連結
+  const linkToggleAuth = document.getElementById('link-toggle-auth');
+  if (linkToggleAuth) {
+    linkToggleAuth.addEventListener('click', (e) => {
+      e.preventDefault();
+      isSignUpMode = !isSignUpMode;
+      
+      const titleEl = document.querySelector('.login-header h2');
+      const descEl = document.querySelector('.login-header p');
+      const btnText = document.querySelector('#btn-login .btn-text');
+      
+      if (isSignUpMode) {
+        titleEl.textContent = '註冊新帳本';
+        descEl.textContent = '輸入全新的 Email 與密碼以建立您的個人帳本空間';
+        btnText.textContent = '註冊並解鎖';
+        linkToggleAuth.textContent = '已有帳密？改為解鎖登入';
+      } else {
+        titleEl.textContent = '解鎖記帳本';
+        descEl.textContent = '請輸入您的專屬記帳帳密以同步雲端資料';
+        btnText.textContent = '解鎖帳本';
+        linkToggleAuth.textContent = '註冊新帳本帳戶';
+      }
+    });
+  }
   
   // 登出鎖定按鈕
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
@@ -619,18 +647,44 @@ async function handleLoginSubmit(e) {
   const spinner = btn.querySelector('.spinner');
   
   btn.disabled = true;
-  btnText.textContent = '解鎖中...';
+  const originalText = btnText.textContent;
+  btnText.textContent = isSignUpMode ? '註冊中...' : '解鎖中...';
   spinner.classList.remove('hidden');
   
   try {
-    await firebase.auth().signInWithEmailAndPassword(email, password);
-    showToast('🎉 帳本已成功解鎖！');
+    if (isSignUpMode) {
+      await firebase.auth().createUserWithEmailAndPassword(email, password);
+      showToast('🎉 帳本註冊並解鎖成功！');
+      
+      // 註冊成功後自動切回登入模式以備下次使用
+      isSignUpMode = false;
+      const titleEl = document.querySelector('.login-header h2');
+      const descEl = document.querySelector('.login-header p');
+      const linkToggleAuth = document.getElementById('link-toggle-auth');
+      if (titleEl) titleEl.textContent = '解鎖記帳本';
+      if (descEl) descEl.textContent = '請輸入您的專屬記帳帳密以同步雲端資料';
+      if (linkToggleAuth) linkToggleAuth.textContent = '註冊新帳本帳戶';
+    } else {
+      await firebase.auth().signInWithEmailAndPassword(email, password);
+      showToast('🎉 帳本已成功解鎖！');
+    }
   } catch (err) {
-    console.error('登入失敗:', err);
-    showToast('❌ 密碼錯誤或此帳號不存在', 'error');
+    console.error('身份驗證失敗:', err);
+    let errMsg = isSignUpMode ? '❌ 註冊失敗' : '❌ 密碼錯誤或此帳號不存在';
+    
+    if (isSignUpMode) {
+      if (err.code === 'auth/email-already-in-use') {
+        errMsg = '❌ 註冊失敗：此 Email 已被註冊使用';
+      } else if (err.code === 'auth/weak-password') {
+        errMsg = '❌ 註冊失敗：密碼強度不足 (需至少 6 碼)';
+      } else if (err.code === 'auth/invalid-email') {
+        errMsg = '❌ 註冊失敗：Email 格式不正確';
+      }
+    }
+    showToast(errMsg, 'error');
   } finally {
     btn.disabled = false;
-    btnText.textContent = '解鎖帳本';
+    btnText.textContent = originalText;
     spinner.classList.add('hidden');
   }
 }
