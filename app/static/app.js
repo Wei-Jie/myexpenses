@@ -64,7 +64,24 @@ function setupAppVersion() {
 
 // 2. 初始化 Firebase 連線
 function initFirebaseConnection() {
-  const configStr = localStorage.getItem('firebase_config');
+  let configStr = localStorage.getItem('firebase_config');
+  
+  // 預設的 Firebase 雲端連線配置 (自動載入，免除新用戶手動貼上之繁雜手續)
+  const defaultConfig = {
+    apiKey: "AIzaSyBaAlYXKG3lbNh3c1UbjWEIHKpgbWAIMkw",
+    authDomain: "gen-lang-client-0961531038.firebaseapp.com",
+    projectId: "gen-lang-client-0961531038",
+    storageBucket: "gen-lang-client-0961531038.firebasestorage.app",
+    messagingSenderId: "698855135058",
+    appId: "1:698855135058:web:60d6baafefe43548a54c8b",
+    measurementId: "G-BHBXBSS460"
+  };
+  
+  if (!configStr) {
+    configStr = JSON.stringify(defaultConfig);
+    localStorage.setItem('firebase_config', configStr);
+  }
+  
   const statusIndicator = document.querySelector('.status-indicator');
   const statusText = document.querySelector('.status-text');
   
