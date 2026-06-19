@@ -173,11 +173,17 @@ function setupAuthListener() {
       
       // D. 控制連線設定卡片可見度 (僅 jeff.wang0211@gmail.com 可看見，其餘隱藏，但保留登出按鈕)
       const configCard = document.getElementById('firebase-config-card');
+      const adminCard = document.getElementById('admin-user-management-card');
       if (configCard) {
         if (user.email === 'jeff.wang0211@gmail.com') {
           configCard.classList.remove('hidden');
+          if (adminCard) {
+            adminCard.classList.remove('hidden');
+            loadAdminUserManagement();
+          }
         } else {
           configCard.classList.add('hidden');
+          if (adminCard) adminCard.classList.add('hidden');
         }
       }
       
@@ -188,6 +194,8 @@ function setupAuthListener() {
       loginOverlay.classList.remove('hidden');
       logoutBtn.classList.add('hidden');
       if (ledgerWrapper) ledgerWrapper.classList.add('hidden');
+      const adminCard = document.getElementById('admin-user-management-card');
+      if (adminCard) adminCard.classList.add('hidden');
       showConnectionError();
       
       // 清空本地快取，保護隱私
@@ -2803,3 +2811,69 @@ async function handleCancelShare(collaboratorUid, collaboratorEmail) {
     showToast('❌ 取消共享失敗', 'error');
   }
 }
+
+// ==========================================================================
+// 26. 管理員專屬：系統註冊帳號管理邏輯 [NEW]
+// ==========================================================================
+async function loadAdminUserManagement() {
+  const container = document.getElementById('admin-user-list');
+  if (!container || !db) return;
+  
+  try {
+    const snap = await db.collection('users').get();
+    container.innerHTML = '';
+    
+    if (snap.empty) {
+      container.innerHTML = '<li style="font-size:0.9rem; color:var(--text-muted); text-align:center;">目前系統無任何註冊帳號紀錄</li>';
+      return;
+    }
+    
+    snap.forEach(doc => {
+      const data = doc.data();
+      const email = data.email || '未知 Email';
+      const uid = doc.id;
+      
+      let dateStr = '未知活動時間';
+      if (data.updated_at) {
+        const t = data.updated_at.toDate ? data.updated_at.toDate() : new Date(data.updated_at);
+        dateStr = `${t.getFullYear()}/${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+      }
+      
+      const itemHtml = `
+        <li style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-bottom: 6px; background: rgba(141,110,99,0.02); border-radius: var(--radius-xs); border: 1.5px solid var(--card-border);">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-weight: bold; font-size: 0.9rem;">${email}</span>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">UID: ${uid} | 上次活動: ${dateStr}</span>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="deleteAdminUserRecord('${uid}', '${email}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">❌</button>
+        </li>
+      `;
+      container.insertAdjacentHTML('beforeend', itemHtml);
+    });
+  } catch (err) {
+    console.error('加載系統註冊使用者失敗:', err);
+    container.innerHTML = `<li style="font-size:0.9rem; color:var(--color-primary); text-align:center;">❌ 加載失敗 (請確認 Rules 已貼上並釋出)</li>`;
+  }
+}
+
+window.deleteAdminUserRecord = async function(uid, email) {
+  if (!db) return;
+  
+  const confirmed = await showCustomConfirm(
+    `您確定要將帳號 [${email}] 從系統註冊記錄中除名嗎？\n此動作會將該帳號從 users 集合刪除，使他人無法對其發出共享邀請。\n(注意：此動作不會刪除其交易明細，亦無法刪除其 Firebase Auth 帳戶。)`,
+    '確認將該帳號除名嗎？',
+    'sad_shiba.png',
+    '確認除名',
+    '取消'
+  );
+  if (!confirmed) return;
+  
+  try {
+    await db.collection('users').doc(uid).delete();
+    showToast(`🗑️ 帳號 [${email}] 紀錄已成功刪除`);
+    await loadAdminUserManagement();
+  } catch (err) {
+    console.error('刪除帳號記錄失敗:', err);
+    showToast('❌ 刪除帳號記錄失敗', 'error');
+  }
+};

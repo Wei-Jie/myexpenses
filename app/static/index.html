@@ -646,6 +646,15 @@
           </form>
         </div>
         
+        <!-- [NEW] 管理員專屬：系統註冊帳號管理卡片 -->
+        <div class="card form-card hidden" id="admin-user-management-card" style="margin-top: 20px;">
+          <h3>👥 系統註冊帳號管理 (管理員專屬)</h3>
+          <p class="description">在此查看所有已註冊的記帳使用者帳號。點選 ❌ 將其從系統資料庫中除名。</p>
+          <ul class="manager-list" id="admin-user-list" style="max-height: 250px; overflow-y: auto;">
+            <li>載入中...</li>
+          </ul>
+        </div>
+        
         <!-- [NEW] 獨立的登出按鈕 (在連線設定卡片隱藏時依然對所有人可見) -->
         <button type="button" id="btn-logout" class="btn btn-danger w-100 m-t-20 hidden" style="margin-bottom: 20px;">登出記帳帳號</button>
 
