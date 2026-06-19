@@ -622,7 +622,7 @@
         </div>
 
 
-        <div class="card form-card">
+        <div class="card form-card" id="firebase-config-card">
           <h3>🔌 Firebase 雲端資料庫連線設定</h3>
           <p class="description">請貼上您在 Firebase 註冊的網頁應用程式 `firebaseConfig` 物件內容 (包含大括號 `{ ... }`)。</p>
           
@@ -644,9 +644,10 @@
               <button type="button" id="btn-clear-settings" class="btn btn-danger">清除連線設定</button>
             </div>
           </form>
-          
-          <button type="button" id="btn-logout" class="btn btn-danger w-100 m-t-20 hidden">登出記帳帳號</button>
         </div>
+        
+        <!-- [NEW] 獨立的登出按鈕 (在連線設定卡片隱藏時依然對所有人可見) -->
+        <button type="button" id="btn-logout" class="btn btn-danger w-100 m-t-20 hidden" style="margin-bottom: 20px;">登出記帳帳號</button>
 
         <div class="grid-2-col m-t-20">
           <!-- 分類項目管理 -->

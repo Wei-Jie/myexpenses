@@ -168,6 +168,16 @@ function setupAuthListener() {
       // C. 載入並建立共享帳本關係與切換選單
       await initLedgerSharing();
       
+      // D. 控制連線設定卡片可見度 (僅 jeff.wang0211@gmail.com 可看見，其餘隱藏，但保留登出按鈕)
+      const configCard = document.getElementById('firebase-config-card');
+      if (configCard) {
+        if (user.email === 'jeff.wang0211@gmail.com') {
+          configCard.classList.remove('hidden');
+        } else {
+          configCard.classList.add('hidden');
+        }
+      }
+      
       // 載入與初始化雲端資料
       await loadAndInitializeData();
     } else {
@@ -1897,16 +1907,125 @@ async function renderSettingsLists() {
   payList.innerHTML = '';
   
   categoriesCache.forEach(cat => {
-    catList.insertAdjacentHTML('beforeend', `<li><span>${cat.name}</span></li>`);
+    const itemHtml = `
+      <li style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; margin-bottom: 5px; background: rgba(141,110,99,0.02); border-radius: var(--radius-xs); border: 1.5px solid var(--card-border);">
+        <span>${cat.name}</span>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="editCategory('${cat.id}', '${cat.name}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCategory('${cat.id}', '${cat.name}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">❌</button>
+        </div>
+      </li>`;
+    catList.insertAdjacentHTML('beforeend', itemHtml);
   });
   
   paymentsCache.forEach(pay => {
     const badge = pay.is_credit ? '<span class="tag" style="background-color: rgba(255,145,0,0.15); color: var(--color-credit)">刷卡</span>' : '<span class="tag">現金/轉帳</span>';
-    payList.insertAdjacentHTML('beforeend', `<li><span>${pay.name}</span> ${badge}</li>`);
+    const itemHtml = `
+      <li style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; margin-bottom: 5px; background: rgba(141,110,99,0.02); border-radius: var(--radius-xs); border: 1.5px solid var(--card-border);">
+        <span style="display: flex; align-items: center; gap: 6px;">${pay.name} ${badge}</span>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="editPayment('${pay.id}', '${pay.name}', ${pay.is_credit})" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="deletePayment('${pay.id}', '${pay.name}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">❌</button>
+        </div>
+      </li>`;
+    payList.insertAdjacentHTML('beforeend', itemHtml);
   });
   
   renderRecurringSettings();
 }
+
+// ==========================================================================
+// 25. 分類與付款管道的編輯與刪除操作 [NEW]
+// ==========================================================================
+window.editCategory = async function(id, currentName) {
+  if (!db) return;
+  const newName = prompt('📝 請輸入新的分類名稱：', currentName);
+  if (newName === null) return; // 點擊取消
+  
+  const cleanName = newName.trim();
+  if (!cleanName) {
+    showToast('❌ 分類名稱不可為空', 'error');
+    return;
+  }
+  if (cleanName === currentName) return;
+  
+  try {
+    await db.collection('categories').doc(id).update({ name: cleanName });
+    showToast('🎉 分類修改成功！');
+    await loadAndInitializeData();
+  } catch (err) {
+    console.error('修改分類失敗:', err);
+    showToast('❌ 修改分類失敗', 'error');
+  }
+};
+
+window.deleteCategory = async function(id, name) {
+  if (!db) return;
+  const confirmed = await showCustomConfirm(
+    `您確定要刪除 [${name}] 分類嗎？\n刪除後不會影響歷史帳目，但未來記帳時將無法選取。`,
+    '確認刪除分類嗎？',
+    'sad_shiba.png',
+    '確認刪除',
+    '取消'
+  );
+  if (!confirmed) return;
+  
+  try {
+    await db.collection('categories').doc(id).delete();
+    showToast('🗑️ 分類已成功刪除');
+    await loadAndInitializeData();
+  } catch (err) {
+    console.error('刪除分類失敗:', err);
+    showToast('❌ 刪除分類失敗', 'error');
+  }
+};
+
+window.editPayment = async function(id, currentName, currentIsCredit) {
+  if (!db) return;
+  const newName = prompt('📝 請輸入新的付款管道名稱：', currentName);
+  if (newName === null) return; // 點擊取消
+  
+  const cleanName = newName.trim();
+  if (!cleanName) {
+    showToast('❌ 管道名稱不可為空', 'error');
+    return;
+  }
+  
+  const isCredit = confirm(`該管道 [${cleanName}] 是否為信用卡/點數？\n（確定 = 信用卡/點數，取消 = 現金/轉帳）`);
+  
+  try {
+    await db.collection('payment_methods').doc(id).update({
+      name: cleanName,
+      is_credit: isCredit
+    });
+    showToast('🎉 付款管道修改成功！');
+    await loadAndInitializeData();
+  } catch (err) {
+    console.error('修改管道失敗:', err);
+    showToast('❌ 修改管道失敗', 'error');
+  }
+};
+
+window.deletePayment = async function(id, name) {
+  if (!db) return;
+  const confirmed = await showCustomConfirm(
+    `您確定要刪除 [${name}] 付款管道嗎？\n刪除後不會影響歷史帳目，但未來記帳時將無法選取。`,
+    '確認刪除付款管道嗎？',
+    'sad_shiba.png',
+    '確認刪除',
+    '取消'
+  );
+  if (!confirmed) return;
+  
+  try {
+    await db.collection('payment_methods').doc(id).delete();
+    showToast('🗑️ 付款管道已成功刪除');
+    await loadAndInitializeData();
+  } catch (err) {
+    console.error('刪除管道失敗:', err);
+    showToast('❌ 刪除管道失敗', 'error');
+  }
+};
 
 async function handleAddCategory() {
   const input = document.getElementById('new-category-name');
@@ -2045,7 +2164,9 @@ const DEFAULT_RECURRING_CONFIG = {
 };
 
 function getRecurringConfig() {
-  const config = localStorage.getItem('recurring_config');
+  const uid = currentLedgerOwnerUid || (firebase.auth().currentUser ? firebase.auth().currentUser.uid : 'default');
+  const key = `recurring_config_${uid}`;
+  const config = localStorage.getItem(key);
   if (config) {
     try {
       return JSON.parse(config);
@@ -2053,12 +2174,14 @@ function getRecurringConfig() {
       console.error('解析規費設定失敗，使用預設配置:', e);
     }
   }
-  localStorage.setItem('recurring_config', JSON.stringify(DEFAULT_RECURRING_CONFIG));
+  localStorage.setItem(key, JSON.stringify(DEFAULT_RECURRING_CONFIG));
   return DEFAULT_RECURRING_CONFIG;
 }
 
 function saveRecurringConfig(config) {
-  localStorage.setItem('recurring_config', JSON.stringify(config));
+  const uid = currentLedgerOwnerUid || (firebase.auth().currentUser ? firebase.auth().currentUser.uid : 'default');
+  const key = `recurring_config_${uid}`;
+  localStorage.setItem(key, JSON.stringify(config));
 }
 
 function renderRecurringSettings() {
