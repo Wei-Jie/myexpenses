@@ -42,7 +42,7 @@ function registerServiceWorker() {
 }
 
 // 1. 更版快取檢測與版本設定 (Cache Busting)
-const APP_VERSION = '20260618_15';
+const APP_VERSION = '20260618_16';
 function setupAppVersion() {
   console.log(`智慧記帳系統 (Firebase Auth 版) 啟動，版本號: ${APP_VERSION}`);
   const lastVersion = localStorage.getItem('app_version');
@@ -560,7 +560,7 @@ async function handleLoginSubmit(e) {
 }
 
 async function handleLogout() {
-  const confirmed = await showCustomConfirm('您確定要鎖定帳本並登出嗎？離線時將無法記帳。', '確定要登出鎖定嗎？', 'shiba_guard.png');
+  const confirmed = await showCustomConfirm('您確定要鎖定帳本並登出嗎？離線時將無法記帳。', '確定要登出鎖定嗎？', 'shiba_guard.png', '確認登出', '取消');
   if (!confirmed) return;
   
   try {
@@ -912,7 +912,7 @@ async function handleUpdateExpense(e) {
 }
 
 async function handleDeleteExpense(id) {
-  const confirmed = await showCustomConfirm('真的要刪除這筆消費明細嗎？柴柴會哭哭喔... (ಥ_ಥ)', '真的要刪除嗎？', 'sad_shiba.png');
+  const confirmed = await showCustomConfirm('真的要刪除這筆消費明細嗎？柴柴會哭哭喔... (ಥ_ಥ)', '真的要刪除嗎？', 'sad_shiba.png', '確認刪除', '留著帳目');
   if (!confirmed) return;
   if (!db) return;
   
@@ -1694,7 +1694,7 @@ function handleSaveSettings(e) {
 }
 
 async function handleClearSettings() {
-  const confirmed = await showCustomConfirm('您確定要清除連線設定嗎？資料庫中的資料不會遺失，但此瀏覽器將無法同步。', '清除連線設定？', 'shiba_guard.png');
+  const confirmed = await showCustomConfirm('您確定要清除連線設定嗎？資料庫中的資料不會遺失，但此瀏覽器將無法同步。', '清除連線設定？', 'shiba_guard.png', '確認清除', '取消');
   if (!confirmed) return;
   
   localStorage.removeItem('firebase_config');
@@ -2170,7 +2170,7 @@ function renderRecurringChart(monthlySums) {
 // ==========================================================================
 // 22. 自訂可愛確認對話框 (Custom Confirm Dialog) [NEW]
 // ==========================================================================
-function showCustomConfirm(message, title = '真的要刪除嗎？', imgSrc = 'sad_shiba.png') {
+function showCustomConfirm(message, title = '真的要刪除嗎？', imgSrc = 'sad_shiba.png', yesText = '確認', noText = '取消') {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
     const titleEl = modal.querySelector('.confirm-header h3');
@@ -2186,6 +2186,10 @@ function showCustomConfirm(message, title = '真的要刪除嗎？', imgSrc = 's
     
     const btnYes = document.getElementById('btn-confirm-yes');
     const btnNo = document.getElementById('btn-confirm-no');
+    
+    // 動態修改按鈕文字
+    btnYes.textContent = yesText;
+    btnNo.textContent = noText;
     
     const cleanup = (result) => {
       modal.classList.add('hidden');
