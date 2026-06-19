@@ -1392,6 +1392,7 @@ async function handleSaveDaigou(e) {
   
   if (!db) return;
   
+  try {
     const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
     await db.collection('daigou').add({
       uid: uid,
