@@ -1344,3 +1344,41 @@ select:focus {
   padding: 0 10px;
 }
 
+/* ==========================================================================
+   20. 明細列表表格 RWD 自適應與滾動條優化 [NEW]
+   ========================================================================== */
+/* 限制明細頁表格容器高度，固定橫向滾動條在卡片底部，免滾到最下方才能拖動 */
+#page-transactions .table-responsive {
+  max-height: 60vh;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--card-border);
+}
+
+/* 允許備註與品項長文字欄位在寬螢幕下折行，避免撐寬表格 */
+.data-table td {
+  white-space: normal !important; /* 放寬為允許換行 */
+}
+
+/* 日期、金額等數值或短文字欄位保持 nowrap 避免雜亂折行 */
+.data-table td:nth-child(1), /* 日期 */
+.data-table td:nth-child(2), /* 星期 */
+.data-table td:nth-child(4), /* 付款方式 */
+.data-table td:nth-child(5), /* 金額 */
+.data-table td:nth-child(6), /* 刷卡金額 */
+.data-table td:nth-child(7), /* 分類 */
+.data-table td:nth-child(9), /* 操作 */
+.data-table th {
+  white-space: nowrap !important;
+}
+
+/* 限制長文字欄位的最大寬度，強制自動換行或截斷，防止表格超出螢幕 */
+.data-table td:nth-child(3) { /* 品項 */
+  max-width: 160px;
+  word-break: break-all;
+}
+.data-table td:nth-child(8) { /* 備註 */
+  max-width: 200px;
+  word-break: break-all;
+}
+
