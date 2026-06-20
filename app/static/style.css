@@ -703,6 +703,10 @@ select:focus {
   gap: 20px;
 }
 
+.daigou-table-box {
+  min-width: 0; /* 防止 CSS Grid 子項目被內部表格撐爆，確保能順利觸發橫向捲軸 */
+}
+
 .daigou-table-box h3 {
   font-size: 1rem;
   font-weight: 700;

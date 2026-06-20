@@ -2374,8 +2374,9 @@ async function loadRecurringExpenses() {
       
       let matchedCategory = null;
       
-      for (const [catKey, keywords] of Object.entries(config)) {
-        const matches = keywords.some(kw => itemName.includes(kw) || remark.includes(kw) || categoryName.includes(kw));
+      for (const catKey of ['management', 'water', 'electricity', 'taxes', 'others']) {
+        const keywords = config[catKey] || [];
+        const matches = Array.isArray(keywords) && keywords.some(kw => itemName.includes(kw) || remark.includes(kw) || categoryName.includes(kw));
         if (matches) {
           matchedCategory = catKey;
           break;
@@ -2839,13 +2840,18 @@ async function loadAdminUserManagement() {
         dateStr = `${t.getFullYear()}/${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
       }
       
+      const isJeff = email === 'jeff.wang0211@gmail.com';
+      const deleteBtnHtml = isJeff ? '' : `
+        <button class="btn btn-danger btn-sm" onclick="deleteAdminUserRecord('${uid}', '${email}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">❌</button>
+      `;
+      
       const itemHtml = `
         <li style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-bottom: 6px; background: rgba(141,110,99,0.02); border-radius: var(--radius-xs); border: 1.5px solid var(--card-border);">
           <div style="display: flex; flex-direction: column; gap: 2px;">
-            <span style="font-weight: bold; font-size: 0.9rem;">${email}</span>
+            <span style="font-weight: bold; font-size: 0.9rem;">${email} ${isJeff ? '<span class="tag" style="background-color: var(--color-primary-light); color: var(--color-primary);">管理員</span>' : ''}</span>
             <span style="font-size: 0.75rem; color: var(--text-muted);">UID: ${uid} | 上次活動: ${dateStr}</span>
           </div>
-          <button class="btn btn-danger btn-sm" onclick="deleteAdminUserRecord('${uid}', '${email}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">❌</button>
+          ${deleteBtnHtml}
         </li>
       `;
       container.insertAdjacentHTML('beforeend', itemHtml);
@@ -2858,6 +2864,11 @@ async function loadAdminUserManagement() {
 
 window.deleteAdminUserRecord = async function(uid, email) {
   if (!db) return;
+  
+  if (email === 'jeff.wang0211@gmail.com') {
+    showToast('❌ 無法刪除系統管理員帳號', 'error');
+    return;
+  }
   
   const confirmed = await showCustomConfirm(
     `您確定要將帳號 [${email}] 從系統註冊記錄中除名嗎？\n此動作會將該帳號從 users 集合刪除，使他人無法對其發出共享邀請。\n(注意：此動作不會刪除其交易明細，亦無法刪除其 Firebase Auth 帳戶。)`,
