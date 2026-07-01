@@ -343,7 +343,7 @@
                     <th>日期</th>
                     <th>項目</th>
                     <th class="num-col">金額</th>
-                    <th>狀態</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody id="daigou-paid-body">
@@ -799,6 +799,39 @@
         <button type="button" id="btn-confirm-yes" class="btn btn-danger">確認刪除</button>
         <button type="button" id="btn-confirm-no" class="btn btn-secondary">留著帳目</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 編輯代購對話框 (Modal) [NEW] -->
+  <div id="edit-daigou-modal" class="modal hidden">
+    <div class="modal-content card" style="max-width: 450px;">
+      <h3>修改代購項目</h3>
+      <form id="edit-daigou-form">
+        <input type="hidden" id="edit-daigou-id">
+        <div class="form-group">
+          <label for="edit-daigou-date">日期</label>
+          <input type="date" id="edit-daigou-date" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);">
+        </div>
+        <div class="form-group">
+          <label for="edit-daigou-item">項目</label>
+          <input type="text" id="edit-daigou-item" required placeholder="例如：醬油、餛飩皮" style="width: 100%; padding: 10px; border-radius: 8px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);">
+        </div>
+        <div class="form-group">
+          <label for="edit-daigou-amount">金額</label>
+          <input type="number" id="edit-daigou-amount" required min="1" style="width: 100%; padding: 10px; border-radius: 8px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);">
+        </div>
+        <div class="form-row checkbox-row" style="margin-top: 15px; margin-bottom: 15px;">
+          <label class="checkbox-container" style="display: flex; align-items: center; gap: 8px; font-size: 0.95rem; cursor: pointer;">
+            <input type="checkbox" id="edit-daigou-claimed" style="width: auto; margin-right: 0;">
+            <span class="checkmark"></span>
+            此款項已完成請款
+          </label>
+        </div>
+        <div class="button-group-row">
+          <button type="submit" class="btn btn-primary">儲存變更</button>
+          <button type="button" id="btn-cancel-edit-daigou" class="btn btn-secondary">取消</button>
+        </div>
+      </form>
     </div>
   </div>
 

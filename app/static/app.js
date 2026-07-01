@@ -358,6 +358,12 @@ function setupEventListeners() {
     updateWeekDay('edit-date', 'edit-weekday');
   });
 
+  // 編輯代購 Modal
+  document.getElementById('btn-cancel-edit-daigou').addEventListener('click', () => {
+    document.getElementById('edit-daigou-modal').classList.add('hidden');
+  });
+  document.getElementById('edit-daigou-form').addEventListener('submit', handleUpdateDaigou);
+
   // 分類與付款新增
   document.getElementById('btn-add-category').addEventListener('click', handleAddCategory);
   document.getElementById('btn-add-payment').addEventListener('click', handleAddPayment);
@@ -1467,10 +1473,16 @@ async function loadDaigouData() {
           <td>${d.item_name}</td>
           <td class="num-col minus">$${amt.toLocaleString()}</td>
           <td>
-            <button class="btn btn-secondary btn-sm claim-btn" data-id="${d.id}">一鍵請款</button>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button class="btn btn-secondary btn-sm claim-btn" data-id="${d.id}">一鍵請款</button>
+              <button class="btn btn-secondary btn-sm edit-dg-btn" data-id="${d.id}" style="padding: 2px 6px;">✏️</button>
+              <button class="btn btn-danger btn-sm delete-dg-btn" data-id="${d.id}" style="padding: 2px 6px;">❌</button>
+            </div>
           </td>
         `;
         tr.querySelector('.claim-btn').addEventListener('click', () => handleClaimDaigou(d.id));
+        tr.querySelector('.edit-dg-btn').addEventListener('click', () => openEditDaigouModal(d));
+        tr.querySelector('.delete-dg-btn').addEventListener('click', () => deleteDaigouRecord(d.id, d.item_name));
         unpaidBody.appendChild(tr);
       } else {
         paidCount++;
@@ -1478,8 +1490,16 @@ async function loadDaigouData() {
           <td>${dateFormatted}</td>
           <td>${d.item_name}</td>
           <td class="num-col plus">$${amt.toLocaleString()}</td>
-          <td><span class="tag" style="background-color: rgba(0, 230, 118, 0.15); color: var(--color-income)">已請款</span></td>
+          <td>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <span class="tag" style="background-color: rgba(0, 230, 118, 0.15); color: var(--color-income)">已請款</span>
+              <button class="btn btn-secondary btn-sm edit-dg-btn" data-id="${d.id}" style="padding: 2px 6px;">✏️</button>
+              <button class="btn btn-danger btn-sm delete-dg-btn" data-id="${d.id}" style="padding: 2px 6px;">❌</button>
+            </div>
+          </td>
         `;
+        tr.querySelector('.edit-dg-btn').addEventListener('click', () => openEditDaigouModal(d));
+        tr.querySelector('.delete-dg-btn').addEventListener('click', () => deleteDaigouRecord(d.id, d.item_name));
         paidBody.appendChild(tr);
       }
     });
@@ -1539,9 +1559,79 @@ async function handleClaimDaigou(id) {
     await db.collection('daigou').doc(id).update({ is_claimed: true });
     showToast('🎉 已標記為已請款！');
     loadDaigouData();
+    updateDashboardData(); // 連動首頁儀表板代購未請款數據
   } catch (err) {
     console.error('請款更新失敗:', err);
     showToast('❌ 請款標記失敗', 'error');
+  }
+}
+
+// ==========================================================================
+// 27. 代購項目的修改與刪除操作 [NEW]
+// ==========================================================================
+function openEditDaigouModal(daigou) {
+  document.getElementById('edit-daigou-id').value = daigou.id;
+  document.getElementById('edit-daigou-date').value = daigou.date;
+  document.getElementById('edit-daigou-item').value = daigou.item_name;
+  document.getElementById('edit-daigou-amount').value = daigou.amount;
+  document.getElementById('edit-daigou-claimed').checked = daigou.is_claimed;
+  
+  document.getElementById('edit-daigou-modal').classList.remove('hidden');
+}
+
+async function handleUpdateDaigou(e) {
+  e.preventDefault();
+  if (!db) return;
+  
+  const id = document.getElementById('edit-daigou-id').value;
+  const date = document.getElementById('edit-daigou-date').value;
+  const item = document.getElementById('edit-daigou-item').value.trim();
+  const amount = parseFloat(document.getElementById('edit-daigou-amount').value);
+  const isClaimed = document.getElementById('edit-daigou-claimed').checked;
+  
+  if (isNaN(amount) || amount <= 0) {
+    showToast('❌ 金額必須大於 0', 'error');
+    return;
+  }
+  
+  try {
+    await db.collection('daigou').doc(id).update({
+      date,
+      item_name: item,
+      amount,
+      is_claimed: isClaimed
+    });
+    
+    showToast('🎉 代購項目修改成功！');
+    document.getElementById('edit-daigou-modal').classList.add('hidden');
+    loadDaigouData();
+    updateDashboardData();
+  } catch (err) {
+    console.error('修改代購項目失敗:', err);
+    showToast('❌ 修改代購項目失敗', 'error');
+  }
+}
+
+async function deleteDaigouRecord(id, itemName) {
+  if (!db) return;
+  
+  const confirmed = await showCustomConfirm(
+    `您確定要刪除代購項目 [${itemName}] 嗎？\n刪除後該筆款項將不會出現在未請款或歷史請款紀錄中。`,
+    '確認刪除代購項目嗎？',
+    'sad_shiba.png',
+    '確認刪除',
+    '取消'
+  );
+  if (!confirmed) return;
+  
+  try {
+    await db.collection('daigou').doc(id).delete();
+    showToast(`🗑️ 代購項目 [${itemName}] 已成功刪除`);
+    loadDaigouData();
+    updateDashboardData();
+  } catch (err) {
+    console.error('刪除代購項目失敗:', err);
+    showToast('❌ 刪除代購項目失敗', 'error');
   }
 }
 
