@@ -209,7 +209,8 @@ function setupAuthListener() {
   });
 }
 
-// 3. 設定預設日期
+// 3. 設定預設日期 (支援 visibilitychange 喚醒智慧更新)
+let lastDefaultDateStr = '';
 function setDefaultDates() {
   const today = new Date();
   const yyyy = today.getFullYear();
@@ -217,11 +218,26 @@ function setDefaultDates() {
   const dd = String(today.getDate()).padStart(2, '0');
   const dateStr = `${yyyy}-${mm}-${dd}`;
   
-  document.getElementById('exp-date').value = dateStr;
-  document.getElementById('dg-date').value = dateStr;
+  const expDateEl = document.getElementById('exp-date');
+  const dgDateEl = document.getElementById('dg-date');
+  const exportMonthEl = document.getElementById('export-month');
   
-  updateWeekDay('exp-date', 'exp-weekday');
-  document.getElementById('export-month').value = `${yyyy}-${mm}`;
+  // 智慧判斷：如果日期欄位為空，或是目前顯示的值正好等於上一次系統預設設定的日期，
+  // 代表使用者沒有手動去改它，只是因為網頁從背景喚醒，此時我們才自動更新為當下的「今天」。
+  if (expDateEl && (!expDateEl.value || expDateEl.value === lastDefaultDateStr)) {
+    expDateEl.value = dateStr;
+    updateWeekDay('exp-date', 'exp-weekday');
+  }
+  
+  if (dgDateEl && (!dgDateEl.value || dgDateEl.value === lastDefaultDateStr)) {
+    dgDateEl.value = dateStr;
+  }
+  
+  if (exportMonthEl && (!exportMonthEl.value || exportMonthEl.value === (lastDefaultDateStr ? lastDefaultDateStr.substring(0, 7) : ''))) {
+    exportMonthEl.value = `${yyyy}-${mm}`;
+  }
+  
+  lastDefaultDateStr = dateStr;
 }
 
 // 4. 全域事件監聽
@@ -373,6 +389,14 @@ function setupEventListeners() {
   if (btnAddShare) {
     btnAddShare.addEventListener('click', handleAddShare);
   }
+
+  // 監聽網頁 visibilitychange (當過了幾天使用者重新開手機螢幕/切回網頁時，自動更新日期與星期到當天)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[Visibility] 網頁回到前景，更新預設日期與星期...');
+      setDefaultDates();
+    }
+  });
 }
 
 // 5. 分頁切換
