@@ -7,6 +7,7 @@ let categoriesCache = [];
 let paymentsCache = [];
 let transactionsCache = [];
 let autocompleteList = [];
+let templatesCache = [];
 
 // 當前正在存取的帳本擁有者 (用於共享帳本，預設為當前登入者)
 let currentLedgerOwnerUid = null;
@@ -203,6 +204,7 @@ function setupAuthListener() {
       paymentsCache = [];
       transactionsCache = [];
       autocompleteList = [];
+      templatesCache = [];
       currentLedgerOwnerUid = null;
       currentLedgerOwnerEmail = null;
     }
@@ -390,6 +392,47 @@ function setupEventListeners() {
     btnAddShare.addEventListener('click', handleAddShare);
   }
 
+  // [NEW] 常用組合包 (記帳範本) 事件
+  const btnCancelApplyTmpl = document.getElementById('btn-cancel-apply-template');
+  if (btnCancelApplyTmpl) {
+    btnCancelApplyTmpl.addEventListener('click', () => {
+      document.getElementById('template-apply-modal').classList.add('hidden');
+    });
+  }
+  const btnConfirmApplyTmpl = document.getElementById('btn-confirm-apply-template');
+  if (btnConfirmApplyTmpl) {
+    btnConfirmApplyTmpl.addEventListener('click', handleBatchApplyTemplate);
+  }
+  const btnAddApplyItem = document.getElementById('btn-add-apply-item');
+  if (btnAddApplyItem) {
+    btnAddApplyItem.addEventListener('click', addApplyItemRow);
+  }
+  const applyDateInput = document.getElementById('template-apply-date');
+  if (applyDateInput) {
+    applyDateInput.addEventListener('change', () => {
+      updateWeekDay('template-apply-date', 'template-apply-weekday');
+    });
+  }
+  
+  const btnCreateTmpl = document.getElementById('btn-create-template');
+  if (btnCreateTmpl) {
+    btnCreateTmpl.addEventListener('click', () => openEditTemplateModal(null));
+  }
+  const btnCancelEditTmpl = document.getElementById('btn-cancel-edit-template');
+  if (btnCancelEditTmpl) {
+    btnCancelEditTmpl.addEventListener('click', () => {
+      document.getElementById('template-edit-modal').classList.add('hidden');
+    });
+  }
+  const btnAddTmplItem = document.getElementById('btn-add-template-item');
+  if (btnAddTmplItem) {
+    btnAddTmplItem.addEventListener('click', addEditTemplateItemRow);
+  }
+  const tmplEditForm = document.getElementById('template-edit-form');
+  if (tmplEditForm) {
+    tmplEditForm.addEventListener('submit', handleSaveTemplate);
+  }
+
   // 監聽網頁 visibilitychange (當過了幾天使用者重新開手機螢幕/切回網頁時，自動更新日期與星期到當天)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -567,6 +610,42 @@ async function loadAndInitializeData() {
         payment_method_name: data.payment_method_name
       });
     });
+    
+    // E. 載入記帳組合包範本 (限定當前帳本的 UID)
+    let tmplSnap = await db.collection('expense_templates')
+      .where('uid', '==', uid)
+      .get();
+      
+    if (tmplSnap.empty) {
+      console.log('偵測到此帳戶無記帳組合包，自動初始化預設組合包...');
+      const batch = db.batch();
+      DEFAULT_EXPENSE_TEMPLATES.forEach(tmpl => {
+        const ref = db.collection('expense_templates').doc();
+        batch.set(ref, {
+          uid: uid,
+          name: tmpl.name,
+          items: tmpl.items,
+          created_at: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+      try {
+        await batch.commit();
+      } catch (err) {
+        console.error('初始化預設組合包失敗:', err);
+      }
+      
+      tmplSnap = await db.collection('expense_templates')
+        .where('uid', '==', uid)
+        .get();
+    }
+    
+    templatesCache = [];
+    tmplSnap.forEach(doc => {
+      templatesCache.push({ id: doc.id, ...doc.data() });
+    });
+    
+    renderQuickaddTemplates();
+    renderSettingsTemplates();
     
     populateDropdowns();
     updateDaigouTextByEmail();
@@ -3000,5 +3079,572 @@ window.deleteAdminUserRecord = async function(uid, email) {
   } catch (err) {
     console.error('刪除帳號記錄失敗:', err);
     showToast('❌ 刪除帳號記錄失敗', 'error');
+  }
+};
+
+// ==========================================================================
+// 28. 常用記帳組合包 / 範本核心邏輯 [NEW]
+// ==========================================================================
+const DEFAULT_EXPENSE_TEMPLATES = [
+  {
+    name: '💰 每月薪資與例行扣繳',
+    items: [
+      {
+        item_name: '本月薪資',
+        type: 'income',
+        amount: 80000,
+        category_name: '收入',
+        payment_method_name: '現金',
+        remark: '本月薪資匯入',
+        is_fixed: false
+      },
+      {
+        item_name: '勞健保費用',
+        type: 'expense',
+        amount: 3100,
+        category_name: '保險',
+        payment_method_name: '現金',
+        remark: '勞健保自負額',
+        is_fixed: true
+      },
+      {
+        item_name: '職工福利金',
+        type: 'expense',
+        amount: 400,
+        category_name: '其他',
+        payment_method_name: '現金',
+        remark: '福利金扣除',
+        is_fixed: true
+      },
+      {
+        item_name: '員工持股信託',
+        type: 'expense',
+        amount: 5000,
+        category_name: '投資',
+        payment_method_name: '現金',
+        remark: '公司持股信託',
+        is_fixed: true
+      }
+    ]
+  }
+];
+
+// A. 渲染快速記帳頁面的組合包捷徑按鈕
+function renderQuickaddTemplates() {
+  const container = document.getElementById('quickadd-templates-container');
+  if (!container) return;
+  
+  if (!templatesCache || templatesCache.length === 0) {
+    container.innerHTML = `
+      <button type="button" class="template-capsule-btn" onclick="openEditTemplateModal(null)" style="border-style: dashed; opacity: 0.85;">
+        <span>➕ 建立常用組合包 (如發薪扣款)</span>
+      </button>
+    `;
+    return;
+  }
+  
+  let html = '';
+  templatesCache.forEach(tmpl => {
+    html += `
+      <button type="button" class="template-capsule-btn" onclick="openApplyTemplateModal('${tmpl.id}')" title="點擊套用「${tmpl.name}」">
+        <span>⚡ ${tmpl.name}</span>
+      </button>
+    `;
+  });
+  
+  container.innerHTML = html;
+}
+
+// B. 渲染設定頁面的組合包管理清單
+function renderSettingsTemplates() {
+  const listEl = document.getElementById('settings-template-list');
+  if (!listEl) return;
+  
+  if (!templatesCache || templatesCache.length === 0) {
+    listEl.innerHTML = '<li style="font-size:0.9rem; color:var(--text-muted); text-align:center;">尚未建立任何組合包範本</li>';
+    return;
+  }
+  
+  listEl.innerHTML = '';
+  templatesCache.forEach(tmpl => {
+    const count = (tmpl.items && tmpl.items.length) || 0;
+    const itemHtml = `
+      <li style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-bottom: 6px; background: rgba(141,110,99,0.02); border-radius: var(--radius-xs); border: 1.5px solid var(--card-border);">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-weight: bold; font-size: 0.95rem;">${tmpl.name}</span>
+          <span class="tag" style="background: rgba(141,110,99,0.1); color: var(--text-primary); font-size: 0.75rem;">內含 ${count} 項</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="openEditTemplateModal('${tmpl.id}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">✏️</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteTemplate('${tmpl.id}', '${tmpl.name}')" style="height: auto; padding: 2px 8px; font-size: 0.75rem;">❌</button>
+        </div>
+      </li>
+    `;
+    listEl.insertAdjacentHTML('beforeend', itemHtml);
+  });
+}
+
+// C. 套用組合包 Modal 操作
+let currentApplyItems = [];
+
+window.openApplyTemplateModal = function(templateId) {
+  const tmpl = templatesCache.find(t => t.id === templateId);
+  if (!tmpl) {
+    showToast('❌ 找不到該組合包範本', 'error');
+    return;
+  }
+  
+  const modal = document.getElementById('template-apply-modal');
+  const titleEl = document.getElementById('template-apply-title');
+  const dateInput = document.getElementById('template-apply-date');
+  
+  titleEl.textContent = `⚡ 套用組合包：${tmpl.name}`;
+  
+  // 預設帶入記帳頁面的日期或今天
+  const quickDate = document.getElementById('exp-date').value || new Date().toISOString().substring(0, 10);
+  dateInput.value = quickDate;
+  updateWeekDay('template-apply-date', 'template-apply-weekday');
+  
+  // 深拷貝項目清單
+  currentApplyItems = JSON.parse(JSON.stringify(tmpl.items || []));
+  
+  renderApplyItemsList();
+  modal.classList.remove('hidden');
+};
+
+function renderApplyItemsList() {
+  const container = document.getElementById('template-apply-items-container');
+  if (!container) return;
+  
+  if (currentApplyItems.length === 0) {
+    container.innerHTML = '<div style="text-align:center; color:var(--text-muted); padding: 15px;">此組合包目前無明細項目，請點擊下方追加項目</div>';
+    calculateApplySummary();
+    return;
+  }
+  
+  // 生成分類與付款選項 HTML
+  const catOptions = categoriesCache.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+  const payOptions = paymentsCache.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+  
+  let html = '';
+  currentApplyItems.forEach((item, idx) => {
+    const isIncome = item.type === 'income';
+    html += `
+      <div class="template-item-row" data-index="${idx}">
+        <div class="template-item-main">
+          <span class="template-type-badge ${isIncome ? 'income' : 'expense'}" onclick="toggleApplyItemType(${idx})" title="點擊切換收支">
+            ${isIncome ? '🟢 收入' : '🔴 支出'}
+          </span>
+          <input type="text" class="apply-item-name" value="${item.item_name || ''}" placeholder="品項名稱" style="flex: 2; padding: 6px 10px; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);" onchange="updateApplyItemField(${idx}, 'item_name', this.value)">
+          <input type="number" class="apply-item-amount" value="${item.amount || ''}" placeholder="金額" step="any" min="0" style="flex: 1.2; padding: 6px 10px; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary); font-weight: bold;" oninput="updateApplyItemField(${idx}, 'amount', this.value); calculateApplySummary();">
+          <button type="button" class="btn btn-danger btn-sm" onclick="removeApplyItemRow(${idx})" style="padding: 2px 6px; font-size: 0.75rem;" title="移除此項">❌</button>
+        </div>
+        <div class="template-item-meta">
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); margin: 0; white-space: nowrap;">分類:</label>
+            <select style="width: 100%; padding: 4px 6px; font-size: 0.8rem; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);" onchange="updateApplyItemField(${idx}, 'category_name', this.value)">
+              ${catOptions}
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); margin: 0; white-space: nowrap;">付款:</label>
+            <select style="width: 100%; padding: 4px 6px; font-size: 0.8rem; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);" onchange="updateApplyItemField(${idx}, 'payment_method_name', this.value)">
+              ${payOptions}
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label class="checkbox-container sm" style="margin: 0; font-size: 0.8rem;">
+              <input type="checkbox" ${item.is_fixed ? 'checked' : ''} onchange="updateApplyItemField(${idx}, 'is_fixed', this.checked)">
+              <span class="checkmark"></span>
+              固定開銷
+            </label>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
+  
+  // 設定下拉選單的預設選中項
+  currentApplyItems.forEach((item, idx) => {
+    const row = container.querySelector(`[data-index="${idx}"]`);
+    if (row) {
+      const selects = row.querySelectorAll('select');
+      if (selects[0] && item.category_name) selects[0].value = item.category_name;
+      if (selects[1] && item.payment_method_name) selects[1].value = item.payment_method_name;
+    }
+  });
+  
+  calculateApplySummary();
+}
+
+window.toggleApplyItemType = function(idx) {
+  if (currentApplyItems[idx]) {
+    currentApplyItems[idx].type = currentApplyItems[idx].type === 'income' ? 'expense' : 'income';
+    renderApplyItemsList();
+  }
+};
+
+window.updateApplyItemField = function(idx, field, value) {
+  if (currentApplyItems[idx]) {
+    if (field === 'amount') {
+      currentApplyItems[idx].amount = parseFloat(value) || 0;
+    } else {
+      currentApplyItems[idx][field] = value;
+    }
+  }
+};
+
+window.removeApplyItemRow = function(idx) {
+  currentApplyItems.splice(idx, 1);
+  renderApplyItemsList();
+};
+
+function addApplyItemRow() {
+  const defaultCat = categoriesCache.length > 0 ? categoriesCache[0].name : '其他';
+  const defaultPay = paymentsCache.length > 0 ? paymentsCache[0].name : '現金';
+  
+  currentApplyItems.push({
+    item_name: '',
+    type: 'expense',
+    amount: 0,
+    category_name: defaultCat,
+    payment_method_name: defaultPay,
+    remark: '',
+    is_fixed: false
+  });
+  renderApplyItemsList();
+}
+
+function calculateApplySummary() {
+  let totalIncome = 0;
+  let totalExpense = 0;
+  
+  currentApplyItems.forEach(item => {
+    const amt = parseFloat(item.amount) || 0;
+    if (item.type === 'income') {
+      totalIncome += amt;
+    } else {
+      totalExpense += amt;
+    }
+  });
+  
+  const net = totalIncome - totalExpense;
+  
+  const incEl = document.getElementById('template-apply-total-income');
+  const expEl = document.getElementById('template-apply-total-expense');
+  const netEl = document.getElementById('template-apply-net-amount');
+  
+  if (incEl) incEl.textContent = `+$${Math.round(totalIncome).toLocaleString()}`;
+  if (expEl) expEl.textContent = `-$${Math.round(totalExpense).toLocaleString()}`;
+  if (netEl) {
+    netEl.textContent = `${net >= 0 ? '+' : ''}$${Math.round(net).toLocaleString()}`;
+    netEl.style.color = net > 0 ? 'var(--color-income)' : (net < 0 ? 'var(--color-expense)' : 'var(--text-primary)');
+  }
+}
+
+// 批次寫入入帳
+async function handleBatchApplyTemplate() {
+  if (!db || !firebase.auth().currentUser) return;
+  if (!currentApplyItems || currentApplyItems.length === 0) {
+    showToast('❌ 請至少保留一筆明細項目', 'error');
+    return;
+  }
+  
+  const dateVal = document.getElementById('template-apply-date').value;
+  const weekDayVal = document.getElementById('template-apply-weekday').value || WEEK_DAYS[new Date(dateVal).getDay()];
+  if (!dateVal) {
+    showToast('❌ 請選擇入帳日期', 'error');
+    return;
+  }
+  
+  // 檢查所有項目品名與金額
+  for (let i = 0; i < currentApplyItems.length; i++) {
+    const item = currentApplyItems[i];
+    if (!item.item_name || !item.item_name.trim()) {
+      showToast(`❌ 第 ${i+1} 項的品項名稱不可為空`, 'error');
+      return;
+    }
+    const amt = parseFloat(item.amount);
+    if (isNaN(amt) || amt <= 0) {
+      showToast(`❌ 請為 [${item.item_name}] 輸入大於 0 的金額`, 'error');
+      return;
+    }
+  }
+  
+  const btnConfirm = document.getElementById('btn-confirm-apply-template');
+  btnConfirm.disabled = true;
+  btnConfirm.textContent = '入帳處理中...';
+  
+  try {
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
+    const batch = db.batch();
+    const newTxList = [];
+    
+    currentApplyItems.forEach(item => {
+      const isIncome = item.type === 'income';
+      const finalAmount = isIncome ? Math.abs(parseFloat(item.amount)) : -Math.abs(parseFloat(item.amount));
+      const ref = db.collection('transactions').doc();
+      
+      const newTxData = {
+        uid: uid,
+        date: dateVal,
+        week_day: weekDayVal,
+        item_name: item.item_name.trim(),
+        amount: finalAmount,
+        category_name: item.category_name,
+        payment_method_name: item.payment_method_name,
+        remark: item.remark || '',
+        is_fixed: !!item.is_fixed,
+        created_at: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      
+      batch.set(ref, newTxData);
+      newTxList.push({ id: ref.id, ...newTxData, created_at: new Date() });
+    });
+    
+    await batch.commit();
+    
+    // 同步更新本地交易快取
+    transactionsCache.unshift(...newTxList);
+    transactionsCache.sort((a, b) => {
+      const dateDiff = new Date(b.date) - new Date(a.date);
+      if (dateDiff !== 0) return dateDiff;
+      const tA = a.created_at ? (a.created_at.seconds ? a.created_at.seconds * 1000 : a.created_at) : 0;
+      const tB = b.created_at ? (b.created_at.seconds ? b.created_at.seconds * 1000 : b.created_at) : 0;
+      return tB - tA;
+    });
+    
+    showToast(`🎉 成功批次新增 ${newTxList.length} 筆明細！`);
+    document.getElementById('template-apply-modal').classList.add('hidden');
+    
+    // 重新整理儀表板與流水帳
+    updateDashboardData();
+    renderTransactionTable();
+  } catch (err) {
+    console.error('批次入帳失敗:', err);
+    showToast('❌ 批次入帳失敗，請確認網路與權限', 'error');
+  } finally {
+    btnConfirm.disabled = false;
+    btnConfirm.textContent = '🚀 確認全部入帳';
+  }
+}
+
+// D. 建立/編輯組合包範本 Modal 操作
+let currentEditingTemplateId = null;
+let currentEditItems = [];
+
+window.openEditTemplateModal = function(templateId = null) {
+  currentEditingTemplateId = templateId;
+  const modal = document.getElementById('template-edit-modal');
+  const titleEl = document.getElementById('template-edit-modal-title');
+  const nameInput = document.getElementById('template-edit-name');
+  
+  if (templateId) {
+    const tmpl = templatesCache.find(t => t.id === templateId);
+    if (!tmpl) return;
+    titleEl.textContent = '✏️ 編輯記帳組合包範本';
+    nameInput.value = tmpl.name || '';
+    currentEditItems = JSON.parse(JSON.stringify(tmpl.items || []));
+  } else {
+    titleEl.textContent = '➕ 新增記帳組合包範本';
+    nameInput.value = '';
+    const defaultCat = categoriesCache.length > 0 ? categoriesCache[0].name : '食';
+    const defaultPay = paymentsCache.length > 0 ? paymentsCache[0].name : '現金';
+    currentEditItems = [
+      { item_name: '', type: 'expense', amount: 0, category_name: defaultCat, payment_method_name: defaultPay, remark: '', is_fixed: false }
+    ];
+  }
+  
+  renderEditItemsList();
+  modal.classList.remove('hidden');
+};
+
+function renderEditItemsList() {
+  const container = document.getElementById('template-edit-items-container');
+  if (!container) return;
+  
+  const catOptions = categoriesCache.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+  const payOptions = paymentsCache.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+  
+  let html = '';
+  currentEditItems.forEach((item, idx) => {
+    const isIncome = item.type === 'income';
+    html += `
+      <div class="template-item-row" data-index="${idx}">
+        <div class="template-item-main">
+          <span class="template-type-badge ${isIncome ? 'income' : 'expense'}" onclick="toggleEditItemType(${idx})" title="點擊切換收支">
+            ${isIncome ? '🟢 收入' : '🔴 支出'}
+          </span>
+          <input type="text" value="${item.item_name || ''}" placeholder="品項名稱 (例如：勞健保)" style="flex: 2; padding: 6px 10px; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);" onchange="updateEditItemField(${idx}, 'item_name', this.value)">
+          <input type="number" value="${item.amount || ''}" placeholder="預設金額" step="any" min="0" style="flex: 1.2; padding: 6px 10px; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);" oninput="updateEditItemField(${idx}, 'amount', this.value)">
+          <button type="button" class="btn btn-danger btn-sm" onclick="removeEditItemRow(${idx})" style="padding: 2px 6px; font-size: 0.75rem;" title="移除此項">❌</button>
+        </div>
+        <div class="template-item-meta">
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); margin: 0; white-space: nowrap;">分類:</label>
+            <select style="width: 100%; padding: 4px 6px; font-size: 0.8rem; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);" onchange="updateEditItemField(${idx}, 'category_name', this.value)">
+              ${catOptions}
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); margin: 0; white-space: nowrap;">付款:</label>
+            <select style="width: 100%; padding: 4px 6px; font-size: 0.8rem; border-radius: 6px; border: 1.5px solid var(--card-border); background: var(--input-bg); color: var(--text-primary);" onchange="updateEditItemField(${idx}, 'payment_method_name', this.value)">
+              ${payOptions}
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label class="checkbox-container sm" style="margin: 0; font-size: 0.8rem;">
+              <input type="checkbox" ${item.is_fixed ? 'checked' : ''} onchange="updateEditItemField(${idx}, 'is_fixed', this.checked)">
+              <span class="checkmark"></span>
+              固定開銷
+            </label>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
+  
+  // 設定下拉選單的預設選中項
+  currentEditItems.forEach((item, idx) => {
+    const row = container.querySelector(`[data-index="${idx}"]`);
+    if (row) {
+      const selects = row.querySelectorAll('select');
+      if (selects[0] && item.category_name) selects[0].value = item.category_name;
+      if (selects[1] && item.payment_method_name) selects[1].value = item.payment_method_name;
+    }
+  });
+}
+
+window.toggleEditItemType = function(idx) {
+  if (currentEditItems[idx]) {
+    currentEditItems[idx].type = currentEditItems[idx].type === 'income' ? 'expense' : 'income';
+    renderEditItemsList();
+  }
+};
+
+window.updateEditItemField = function(idx, field, value) {
+  if (currentEditItems[idx]) {
+    if (field === 'amount') {
+      currentEditItems[idx].amount = parseFloat(value) || 0;
+    } else {
+      currentEditItems[idx][field] = value;
+    }
+  }
+};
+
+window.removeEditItemRow = function(idx) {
+  currentEditItems.splice(idx, 1);
+  renderEditItemsList();
+};
+
+function addEditTemplateItemRow() {
+  const defaultCat = categoriesCache.length > 0 ? categoriesCache[0].name : '食';
+  const defaultPay = paymentsCache.length > 0 ? paymentsCache[0].name : '現金';
+  
+  currentEditItems.push({
+    item_name: '',
+    type: 'expense',
+    amount: 0,
+    category_name: defaultCat,
+    payment_method_name: defaultPay,
+    remark: '',
+    is_fixed: false
+  });
+  renderEditItemsList();
+}
+
+async function handleSaveTemplate(e) {
+  e.preventDefault();
+  if (!db || !firebase.auth().currentUser) return;
+  
+  const name = document.getElementById('template-edit-name').value.trim();
+  if (!name) {
+    showToast('❌ 請輸入組合包名稱', 'error');
+    return;
+  }
+  
+  if (currentEditItems.length === 0) {
+    showToast('❌ 請至少新增一筆預設明細', 'error');
+    return;
+  }
+  
+  for (let i = 0; i < currentEditItems.length; i++) {
+    if (!currentEditItems[i].item_name || !currentEditItems[i].item_name.trim()) {
+      showToast(`❌ 第 ${i+1} 項的品項名稱不可為空`, 'error');
+      return;
+    }
+  }
+  
+  try {
+    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
+    const payload = {
+      uid: uid,
+      name: name,
+      items: currentEditItems.map(item => ({
+        item_name: item.item_name.trim(),
+        type: item.type,
+        amount: parseFloat(item.amount) || 0,
+        category_name: item.category_name,
+        payment_method_name: item.payment_method_name,
+        remark: item.remark || '',
+        is_fixed: !!item.is_fixed
+      })),
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    
+    if (currentEditingTemplateId) {
+      await db.collection('expense_templates').doc(currentEditingTemplateId).update(payload);
+      showToast('🎉 組合包範本更新成功！');
+    } else {
+      payload.created_at = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection('expense_templates').add(payload);
+      showToast('🎉 組合包範本新增成功！');
+    }
+    
+    document.getElementById('template-edit-modal').classList.add('hidden');
+    
+    // 重新載入組合包快取
+    await reloadTemplatesCache();
+  } catch (err) {
+    console.error('儲存組合包範本失敗:', err);
+    showToast('❌ 儲存組合包失敗', 'error');
+  }
+}
+
+async function reloadTemplatesCache() {
+  if (!db || !firebase.auth().currentUser) return;
+  const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
+  const snap = await db.collection('expense_templates').where('uid', '==', uid).get();
+  templatesCache = [];
+  snap.forEach(doc => {
+    templatesCache.push({ id: doc.id, ...doc.data() });
+  });
+  renderQuickaddTemplates();
+  renderSettingsTemplates();
+}
+
+window.deleteTemplate = async function(id, name) {
+  if (!db) return;
+  
+  const confirmed = await showCustomConfirm(
+    `您確定要刪除組合包範本 [${name}] 嗎？\n刪除後不會影響歷史帳目，但快速記帳時將無法再套用。`,
+    '確認刪除組合包嗎？',
+    'sad_shiba.png',
+    '確認刪除',
+    '取消'
+  );
+  if (!confirmed) return;
+  
+  try {
+    await db.collection('expense_templates').doc(id).delete();
+    showToast(`🗑️ 組合包 [${name}] 已成功刪除`);
+    await reloadTemplatesCache();
+  } catch (err) {
+    console.error('刪除組合包失敗:', err);
+    showToast('❌ 刪除組合包失敗', 'error');
   }
 };

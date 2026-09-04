@@ -154,6 +154,12 @@
       <!-- 2. 快速記帳頁面 (Quick Add) -->
       <section id="page-quickadd" class="page-section">
         <h2>快速記帳</h2>
+        
+        <!-- [NEW] 常用組合包快捷區 -->
+        <div class="template-quick-bar" id="quickadd-templates-container">
+          <!-- 由 app.js 動態渲染膠囊按鈕 -->
+        </div>
+
         <div class="card form-card">
           <form id="expense-form">
             <!-- 日期與星期 -->
@@ -658,6 +664,20 @@
         <!-- [NEW] 獨立的登出按鈕 (在連線設定卡片隱藏時依然對所有人可見) -->
         <button type="button" id="btn-logout" class="btn btn-danger w-100 m-t-20 hidden" style="margin-bottom: 20px;">登出記帳帳號</button>
 
+        <!-- [NEW] 記帳組合包 (常用範本管理) -->
+        <div class="card m-t-20">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin-bottom: 0;">📦 記帳組合包 (常用範本管理)</h3>
+            <button id="btn-create-template" class="btn btn-secondary btn-sm">➕ 新增組合包</button>
+          </div>
+          <p class="description">在此自訂每月的薪資拆項、固定扣款或例行支出組合，在記帳頁可一鍵呼叫快速入帳。</p>
+          <div class="list-manager">
+            <ul class="manager-list" id="settings-template-list">
+              <li>載入中...</li>
+            </ul>
+          </div>
+        </div>
+
         <div class="grid-2-col m-t-20">
           <!-- 分類項目管理 -->
           <div class="card">
@@ -830,6 +850,92 @@
         <div class="button-group-row">
           <button type="submit" class="btn btn-primary">儲存變更</button>
           <button type="button" id="btn-cancel-edit-daigou" class="btn btn-secondary">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- [NEW] 套用記帳組合包彈窗 -->
+  <div id="template-apply-modal" class="modal hidden">
+    <div class="modal-content card" style="max-width: 680px; width: 95%;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3 id="template-apply-title" style="margin: 0;">⚡ 套用組合包</h3>
+        <span class="tag" id="template-apply-badge" style="background-color: var(--color-primary-light); color: var(--color-primary);">批次入帳</span>
+      </div>
+      
+      <!-- 入帳日期 -->
+      <div class="form-row split" style="margin-bottom: 15px;">
+        <div class="form-group" style="margin-bottom: 0;">
+          <label for="template-apply-date">入帳日期</label>
+          <input type="date" id="template-apply-date" required>
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+          <label for="template-apply-weekday">星期</label>
+          <input type="text" id="template-apply-weekday" readonly class="readonly-input">
+        </div>
+      </div>
+
+      <!-- 項目列表容器 -->
+      <div class="template-items-scroll-box">
+        <div id="template-apply-items-container">
+          <!-- 動態載入每筆項目行 -->
+        </div>
+      </div>
+
+      <!-- 臨時加一筆按鈕 -->
+      <button type="button" id="btn-add-apply-item" class="btn btn-secondary btn-sm w-100 m-t-10" style="background: transparent; color: var(--color-primary); border: 1.5px dashed var(--color-primary);">
+        ➕ 額外追加一筆明細
+      </button>
+
+      <!-- 即時統計條 -->
+      <div class="template-summary-bar m-t-15">
+        <div class="summary-col income">
+          <span class="label">總收入</span>
+          <span class="val" id="template-apply-total-income">+$0</span>
+        </div>
+        <div class="summary-col expense">
+          <span class="label">總支出</span>
+          <span class="val" id="template-apply-total-expense">-$0</span>
+        </div>
+        <div class="summary-col net">
+          <span class="label">本筆淨變動</span>
+          <span class="val" id="template-apply-net-amount">$0</span>
+        </div>
+      </div>
+
+      <div class="button-group-row m-t-15">
+        <button type="button" id="btn-confirm-apply-template" class="btn btn-primary">🚀 確認全部入帳</button>
+        <button type="button" id="btn-cancel-apply-template" class="btn btn-secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- [NEW] 新增/編輯記帳組合包範本彈窗 -->
+  <div id="template-edit-modal" class="modal hidden">
+    <div class="modal-content card" style="max-width: 680px; width: 95%;">
+      <h3 id="template-edit-modal-title" style="margin-top: 0;">✏️ 編輯記帳組合包範本</h3>
+      <form id="template-edit-form">
+        <input type="hidden" id="template-edit-id">
+        
+        <div class="form-group">
+          <label for="template-edit-name">組合包名稱 (可加 Emoji)</label>
+          <input type="text" id="template-edit-name" placeholder="例如：💰 每月薪資與例行扣繳、🏠 月初固定開銷" required>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px; margin-bottom: 8px;">
+          <label style="margin: 0; font-weight: bold;">包含的預設明細項目</label>
+          <button type="button" id="btn-add-template-item" class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 0.8rem;">➕ 新增項目</button>
+        </div>
+
+        <div class="template-items-scroll-box">
+          <div id="template-edit-items-container">
+            <!-- 動態載入範本項目行 -->
+          </div>
+        </div>
+
+        <div class="button-group-row m-t-15">
+          <button type="submit" class="btn btn-primary">儲存組合包範本</button>
+          <button type="button" id="btn-cancel-edit-template" class="btn btn-secondary">取消</button>
         </div>
       </form>
     </div>
