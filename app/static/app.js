@@ -1961,7 +1961,7 @@ async function importDaigouRows(rows, progressBar, progressText) {
 
 // 17. CSV 舊格式一鍵匯出
 async function handleExportCSV() {
-  if (!db) {
+  if (!db || !firebase.auth().currentUser) {
     showToast('❌ 資料庫未連線', 'error');
     return;
   }
@@ -1983,29 +1983,27 @@ async function handleExportCSV() {
   const endDate = `${nextYr}-${String(nextMth).padStart(2, '0')}-01`;
   
   try {
-    const uid = currentLedgerOwnerUid || firebase.auth().currentUser.uid;
-    const snap = await db.collection('transactions')
-      .where('uid', '==', uid)
-      .where('date', '>=', startDate)
-      .where('date', '<', endDate)
-      .get();
-      
-    const trans = [];
-    snap.forEach(doc => {
-      trans.push(doc.data());
-    });
+    // 從快取直接過濾出當月交易明細 (免 Composite Index 避雷設計，0 延遲且保證不報錯)
+    const trans = transactionsCache.filter(t => t.date >= startDate && t.date < endDate);
     
     if (trans.length === 0) {
       showToast('❌ 該月份無任何消費明細', 'error');
       return;
     }
     
-    trans.sort((a, b) => new Date(a.date) - new Date(b.date) || a.created_at - b.created_at);
+    // 依日期與建立時間升冪排序 (最舊在先，最新在後)
+    const sortedTrans = [...trans].sort((a, b) => {
+      const dateDiff = new Date(a.date) - new Date(b.date);
+      if (dateDiff !== 0) return dateDiff;
+      const tA = a.created_at ? (a.created_at.seconds ? a.created_at.seconds * 1000 : a.created_at) : 0;
+      const tB = b.created_at ? (b.created_at.seconds ? b.created_at.seconds * 1000 : b.created_at) : 0;
+      return tA - tB;
+    });
     
     const headers = ['日期', '星期', '品項', '付款方式', '金額', '刷卡金額', '分類項目', '備註', '固定開銷'];
     const csvRows = [headers.join(',')];
     
-    trans.forEach(t => {
+    sortedTrans.forEach(t => {
       const d = new Date(t.date);
       const dateStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
       const payment = paymentsCache.find(p => p.name === t.payment_method_name);
@@ -2021,14 +2019,15 @@ async function handleExportCSV() {
       }
       
       const fixedStr = t.is_fixed ? '固定' : '';
-      const cleanItem = `"${t.item_name.replace(/"/g, '""')}"`;
+      const cleanItem = `"${(t.item_name || '').replace(/"/g, '""')}"`;
       const cleanRemark = t.remark ? `"${t.remark.replace(/"/g, '""')}"` : '';
       
       const row = [dateStr, t.week_day, cleanItem, t.payment_method_name, amountStr, creditStr, t.category_name, cleanRemark, fixedStr];
       csvRows.push(row.join(','));
     });
     
-    downloadCSVFile(csvRows.join('\n'), `115年消費 - ${parseInt(mth)}月_匯出備份.csv`);
+    const rocYear = parseInt(yr) - 1911;
+    downloadCSVFile(csvRows.join('\n'), `${rocYear}年消費 - ${parseInt(mth)}月_匯出備份.csv`);
     showToast('🎉 消費明細 CSV 匯出成功！');
   } catch (err) {
     console.error('匯出失敗:', err);
